@@ -1,0 +1,313 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 枚举类型
+enum PersonRole {
+  MONARCH          // 君主
+  ADVISOR          // 谋士
+  GENERAL          // 将领
+  CIVIL_OFFICIAL   // 文臣
+  MILITARY_OFFICIAL // 武将
+  RELATIVE         // 外戚
+  EUNUCH           // 宦官
+  OTHER            // 其他
+}
+
+enum Faction {
+  HAN      // 汉
+  CHU      // 楚
+  NEUTRAL  // 中立
+  OTHER    // 其他
+}
+
+enum RelationshipType {
+  ALLY           // 盟友
+  ENEMY          // 敌对
+  SUPERIOR       // 上下级
+  SUBORDINATE    // 下级
+  KINSHIP        // 族亲
+  TEACHER_STUDENT // 师徒
+  OTHER          // 其他
+}
+
+enum PlaceType {
+  CITY        // 城池
+  BATTLEFIELD // 战场
+  RIVER       // 河流
+  MOUNTAIN    // 山脉
+  REGION      // 地区
+  OTHER       // 其他
+}
+
+enum EventType {
+  BATTLE    // 战役
+  POLITICAL // 政治事件
+  PERSONAL  // 人物事件
+  OTHER     // 其他
+}
+
+enum ContentStatus {
+  DRAFT      // 草稿
+  PENDING    // 待审核
+  APPROVED   // 已审核通过
+  PUBLISHED  // 已发布
+  REJECTED   // 已拒绝
+}
+
+// 章节
+model Chapter {
+  id             String   @id @default(uuid())
+  bookId         String   // 书籍ID, 如 "shiji"
+  title          String   // 章节标题
+  summary        String   @db.Text // 章节简介
+  order          Int      // 章节顺序
+  totalParagraphs Int     @default(0) // 段落总数
+  timeRangeStart String?  // 时间范围开始, 如 "公元前256年"
+  timeRangeEnd   String?  // 时间范围结束
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  paragraphs     Paragraph[]
+  events         Event[]     @relation("ChapterEvents")
+
+  @@index([bookId])
+  @@index([order])
+}
+
+// 段落
+model Paragraph {
+  id            String   @id @default(uuid())
+  chapterId     String
+  order         Int      // 段落顺序
+  text          String   @db.Text // 段落原文
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  chapter       Chapter      @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  annotations   Annotation[]
+  
+  // 关联（通过中间表）
+  relatedPersons ParagraphPerson[]
+  relatedPlaces  ParagraphPlace[]
+  relatedEvents  ParagraphEvent[]
+
+  @@index([chapterId])
+  @@index([order])
+}
+
+// 注释
+model Annotation {
+  id          String   @id @default(uuid())
+  paragraphId String
+  targetText  String   // 被注释的文本
+  explanation String   @db.VarChar(200) // 注释内容, 最多60字（实际存储200字符）
+  position    Int      // 在段落中的位置（字符索引）
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+
+  @@index([paragraphId])
+}
+
+// 人物
+model Person {
+  id              String        @id @default(uuid())
+  name            String        // 姓名
+  aliases         String[]      // 别称数组（PostgreSQL 数组）
+  role            PersonRole
+  faction         Faction
+  birthYear       String?       // 生年
+  deathYear       String?       // 卒年
+  activePeriodStart String?     // 活跃年代开始
+  activePeriodEnd   String?     // 活跃年代结束
+  biography       String        @db.Text // 简介
+  keyEvents       String[]      // 关键事件ID列表
+  portraitUrl     String?       // 画像链接
+  firstAppearanceChapterId String? // 首次出现章节ID
+  firstAppearanceParagraphId String? // 首次出现段落ID
+  status          ContentStatus @default(DRAFT)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // 关系
+  sourceRelationships Relationship[] @relation("SourcePerson")
+  targetRelationships Relationship[] @relation("TargetPerson")
+  
+  // 段落关联
+  relatedParagraphs ParagraphPerson[]
+  
+  // 事件参与
+  eventParticipants EventParticipant[]
+
+  @@index([name])
+  @@index([faction])
+  @@index([role])
+  @@index([status])
+}
+
+// 关系
+model Relationship {
+  id                String           @id @default(uuid())
+  sourceId          String
+  targetId          String
+  type              RelationshipType
+  description       String           @db.Text // 关系描述
+  referenceChapters  String[]        // 参考章节ID列表
+  confidence        Int              @default(3) // 可信等级, 1-5
+  timeRangeStart    String?          // 关系时间范围开始
+  timeRangeEnd      String?          // 关系时间范围结束
+  status            ContentStatus    @default(DRAFT)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  sourcePerson      Person           @relation("SourcePerson", fields: [sourceId], references: [id], onDelete: Cascade)
+  targetPerson      Person           @relation("TargetPerson", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, type]) // 防止重复关系
+  @@index([sourceId])
+  @@index([targetId])
+  @@index([type])
+  @@index([status])
+}
+
+// 地点
+model Place {
+  id                    String        @id @default(uuid())
+  name                  String        // 历史名称
+  modernName            String        // 现代地理名称
+  coordinatesLng       Float         // 经度
+  coordinatesLat        Float         // 纬度
+  type                  PlaceType
+  faction               Faction?
+  relatedEvents         String[]      // 相关事件ID列表
+  description           String        @db.Text // 地点描述
+  firstAppearanceChapterId String?     // 首次出现章节ID
+  firstAppearanceParagraphId String?   // 首次出现段落ID
+  status                ContentStatus @default(DRAFT)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  // 段落关联
+  relatedParagraphs    ParagraphPlace[]
+  
+  // 事件关联
+  events                Event[]
+
+  @@index([name])
+  @@index([type])
+  @@index([faction])
+  @@index([status])
+}
+
+// 事件
+model Event {
+  id                  String        @id @default(uuid())
+  name                String        // 事件名称
+  timeRangeStart      String        // 开始时间
+  timeRangeEnd        String?       // 结束时间
+  timeRangeLunar      String?       // 农历
+  locationId          String?       // 地点ID
+  summary             String        @db.Text // 事件简述
+  type                EventType
+  impact              String?        @db.Text // 影响描述
+  relatedParagraphs   String[]      // 相关段落ID列表
+  status              ContentStatus @default(DRAFT)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  chapter             Chapter?      @relation("ChapterEvents", fields: [chapterId], references: [id])
+  chapterId           String?
+  location            Place?        @relation(fields: [locationId], references: [id])
+  
+  // 参与人物
+  participants        EventParticipant[]
+  
+  // 段落关联
+  relatedParagraphsRel ParagraphEvent[]
+
+  @@index([name])
+  @@index([type])
+  @@index([locationId])
+  @@index([status])
+}
+
+// 中间表：段落-人物关联
+model ParagraphPerson {
+  id          String   @id @default(uuid())
+  paragraphId String
+  personId    String
+  createdAt   DateTime @default(now())
+
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  person      Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([paragraphId, personId])
+  @@index([paragraphId])
+  @@index([personId])
+}
+
+// 中间表：段落-地点关联
+model ParagraphPlace {
+  id          String   @id @default(uuid())
+  paragraphId String
+  placeId     String
+  createdAt   DateTime @default(now())
+
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  place       Place     @relation(fields: [placeId], references: [id], onDelete: Cascade)
+
+  @@unique([paragraphId, placeId])
+  @@index([paragraphId])
+  @@index([placeId])
+}
+
+// 中间表：段落-事件关联
+model ParagraphEvent {
+  id          String   @id @default(uuid())
+  paragraphId String
+  eventId     String
+  createdAt   DateTime @default(now())
+
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([paragraphId, eventId])
+  @@index([paragraphId])
+  @@index([eventId])
+}
+
+// 中间表：事件-人物参与
+model EventParticipant {
+  id        String   @id @default(uuid())
+  eventId   String
+  personId  String
+  createdAt DateTime  @default(now())
+
+  event     Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  person    Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, personId])
+  @@index([eventId])
+  @@index([personId])
+}
+
+// 管理员
+model Admin {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  passwordHash String // bcrypt 加密后的密码
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([username])
+}

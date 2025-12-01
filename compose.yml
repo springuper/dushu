@@ -1,0 +1,23 @@
+# Podman/Docker Compose 配置文件
+# 兼容 Podman 和 Docker
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: dushu-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dushu
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # healthcheck 暂时移除，因为 podman-compose 不支持数组格式
+    # 如果需要健康检查，可以在容器启动后手动配置
+
+volumes:
+  postgres_data:
+
