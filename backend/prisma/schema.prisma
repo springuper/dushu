@@ -311,3 +311,42 @@ model Admin {
 
   @@index([username])
 }
+
+// Review 项目（待审核的数据）
+model ReviewItem {
+  id          String        @id @default(uuid())
+  type        ReviewItemType // 类型：人物/关系/地点/事件
+  status      ReviewStatus  @default(PENDING)
+  source      ReviewSource  @default(LLM_EXTRACT) // 来源：LLM 提取/手动录入
+  originalData Json         // 原始数据（LLM 提取的 JSON）
+  modifiedData Json?        // 修正后的数据（可编辑）
+  reviewerNotes String?     @db.Text // 审核备注
+  reviewedBy   String?      // 审核人 ID
+  reviewedAt   DateTime?    // 审核时间
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+}
+
+enum ReviewItemType {
+  PERSON       // 人物
+  RELATIONSHIP // 关系
+  PLACE        // 地点
+  EVENT        // 事件
+}
+
+enum ReviewStatus {
+  PENDING   // 待审核
+  APPROVED  // 已通过
+  REJECTED  // 已拒绝
+  MODIFIED  // 已修改
+}
+
+enum ReviewSource {
+  LLM_EXTRACT // LLM 提取
+  MANUAL      // 手动录入
+}

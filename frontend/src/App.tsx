@@ -6,6 +6,9 @@ import TestPage from './pages/TestPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import LoginPage from './pages/admin/LoginPage'
 import DashboardPage from './pages/admin/DashboardPage'
+import ReviewPage from './pages/admin/ReviewPage'
+import ImportPage from './pages/admin/ImportPage'
+import PersonsPage from './pages/admin/PersonsPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
@@ -26,9 +29,9 @@ function App() {
             }
           >
             <Route index element={<DashboardPage />} />
-            <Route path="review" element={<div>Review 工具（开发中）</div>} />
-            <Route path="import" element={<div>批量导入（开发中）</div>} />
-            <Route path="persons" element={<div>人物管理（开发中）</div>} />
+            <Route path="review" element={<ReviewPage />} />
+            <Route path="import" element={<ImportPage />} />
+            <Route path="persons" element={<PersonsPage />} />
             <Route
               path="relationships"
               element={<div>关系管理（开发中）</div>}

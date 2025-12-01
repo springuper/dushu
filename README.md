@@ -16,7 +16,7 @@
 
 ## 快速开始
 
-> 📖 **详细设置指南**：请先阅读 [QUICK_START.md](./QUICK_START.md)
+> 📖 **详细设置指南**：请先阅读 [docs/setup/QUICK_START.md](./docs/setup/QUICK_START.md)
 
 ### 前置要求
 
@@ -108,11 +108,44 @@ NODE_ENV=development
 dushu/
 ├── frontend/          # 前端项目（Vite + React + TypeScript）
 ├── backend/           # 后端项目（Express + TypeScript + Prisma）
+├── docs/              # 项目文档
+│   ├── setup/         # 设置和快速开始指南
+│   ├── development/   # 开发相关文档（路线图等）
+│   ├── data/          # 数据相关文档（数据来源、推荐书籍等）
+│   └── testing/       # 测试相关文档
 ├── specs/             # 产品规格文档
-├── roadmap.md         # 开发路线图
+├── scripts/           # 工具脚本（LLM 提取、Playwright 下载等）
+├── venv/              # Python 虚拟环境（自动生成，已加入 .gitignore）
+├── data/              # 数据目录（原始文本、处理后的数据等）
 ├── package.json       # 根目录统一脚本
 └── README.md          # 项目说明
 ```
+
+## Python 环境设置（数据准备工具）
+
+项目中的数据准备脚本（Playwright 下载、LLM 提取）需要 Python 环境。
+
+### 首次设置
+
+```bash
+# 运行设置脚本（会自动创建虚拟环境并安装依赖）
+./scripts/setup_python_env.sh
+```
+
+### 使用虚拟环境
+
+```bash
+# 激活虚拟环境
+source venv/bin/activate
+
+# 运行 Python 脚本
+python scripts/download_with_playwright.py ...
+
+# 退出虚拟环境
+deactivate
+```
+
+**注意**：便捷脚本（如 `download_first_chapter_auto.sh`）会自动激活虚拟环境，无需手动激活。
 
 ## 可用脚本
 
@@ -128,17 +161,37 @@ dushu/
 
 ## 开发进度
 
-当前阶段：Milestone 2 - 数据准备与内容管理后台（进行中）
+当前阶段：Milestone 2 - 数据准备与内容管理后台（已完成）
 
 **已完成**：
 - ✅ Milestone 1: 项目基础搭建
-- ✅ 管理后台身份验证
-- ✅ 管理后台基础布局
+- ✅ Milestone 2: 数据准备与内容管理后台
+  - ✅ 管理后台身份验证
+  - ✅ 管理后台基础布局
+  - ✅ Review 工具（列表、详情、批量操作）
+  - ✅ 批量导入功能
+  - ✅ 内容管理基础（人物/关系/地点/事件）
+  - ✅ LLM 批量提取脚本
 
-**进行中**：
-- 🚧 Review 工具
-- 🚧 批量导入功能
-- 🚧 内容管理基础
+**下一步**：
+- 🔄 夯实 Milestone 1 & 2 功能
+- 📚 准备历史书籍数据（详见 [docs/data/DATA_SOURCES.md](./docs/data/DATA_SOURCES.md)）
 
-详见 [roadmap.md](./roadmap.md)
+详见 [docs/development/roadmap.md](./docs/development/roadmap.md)
+
+## 数据来源
+
+本项目使用的历史书籍数据均来自公共领域（Public Domain），可以自由使用。
+
+**推荐资源**：
+- 📖 [维基文库](https://zh.wikisource.org) - 免费古籍文本
+- 📖 [中国哲学书电子化计划](https://ctext.org) - 高质量古籍资源
+
+**详细说明**：请查看 [docs/data/DATA_SOURCES.md](./docs/data/DATA_SOURCES.md)
+
+**推荐书籍**（聚焦秦汉/西汉）：请查看 [docs/data/RECOMMENDED_BOOKS.md](./docs/data/RECOMMENDED_BOOKS.md)
+
+**数据准备流程**：请查看 [scripts/prepare_data.md](./scripts/prepare_data.md)
+
+**测试指南**：请查看 [docs/testing/TESTING.md](./docs/testing/TESTING.md)
 

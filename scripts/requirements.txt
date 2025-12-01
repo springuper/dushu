@@ -1,0 +1,12 @@
+# Python 依赖包
+# 用于数据准备脚本
+
+# LLM 提取
+openai>=1.0.0
+
+# 网页自动化下载
+playwright>=1.40.0
+
+# 注意：安装 playwright 后还需要运行：
+# playwright install chromium
+

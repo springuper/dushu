@@ -147,5 +147,5 @@ npx prisma db pull
    - 阅读界面
    - 段落交互
 
-详见 [roadmap.md](./roadmap.md)
+详见 [../development/roadmap.md](../development/roadmap.md)
 

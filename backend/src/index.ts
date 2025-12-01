@@ -51,6 +51,27 @@ app.get('/api/health', (req, res) => {
 import adminRouter from './routes/admin'
 app.use('/api/admin', adminRouter)
 
+// Review routes
+import reviewRouter from './routes/review'
+app.use('/api/admin/review', reviewRouter)
+
+// Import routes
+import importRouter from './routes/import'
+app.use('/api/admin/import', importRouter)
+
+// Content management routes
+import personsRouter from './routes/persons'
+app.use('/api/admin/persons', personsRouter)
+
+import relationshipsRouter from './routes/relationships'
+app.use('/api/admin/relationships', relationshipsRouter)
+
+import placesRouter from './routes/places'
+app.use('/api/admin/places', placesRouter)
+
+import eventsRouter from './routes/events'
+app.use('/api/admin/events', eventsRouter)
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`)

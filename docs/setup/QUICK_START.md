@@ -179,5 +179,5 @@ npx prisma migrate dev --name init
 
 数据库设置完成后，可以开始：
 - Milestone 2：数据准备与内容管理后台
-- 详见 [roadmap.md](./roadmap.md)
+- 详见 [../development/roadmap.md](../development/roadmap.md)
 
