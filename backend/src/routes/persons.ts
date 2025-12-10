@@ -188,5 +188,30 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 })
 
+// 批量更新状态
+router.post('/batch/status', requireAuth, async (req, res) => {
+  try {
+    const { ids, status } = req.body
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Invalid ids' })
+    }
+
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' })
+    }
+
+    const result = await prisma.person.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    })
+
+    res.json({ success: true, count: result.count })
+  } catch (error) {
+    console.error('Batch update status error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 export default router
 

@@ -11,6 +11,11 @@ import argparse
 import re
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# 加载环境变量
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
 
 try:
     from playwright.sync_api import sync_playwright

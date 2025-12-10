@@ -54,6 +54,9 @@ function AdminLayout() {
     {
       label: '内容管理',
       children: [
+        { label: '书籍管理', path: '/admin/books' },
+        { label: '书籍章节', path: '/admin/chapters' },
+        { label: '章节处理', path: '/admin/chapter-process' },
         { label: '人物管理', path: '/admin/persons' },
         { label: '关系管理', path: '/admin/relationships' },
         { label: '地点管理', path: '/admin/places' },

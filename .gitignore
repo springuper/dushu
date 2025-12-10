@@ -22,6 +22,7 @@ dist/
 .env.development.local
 .env.test.local
 .env.production.local
+# 注意：.env.example 应该提交到 Git，作为配置模板
 
 # Logs
 npm-debug.log*

@@ -2,6 +2,7 @@ import express from 'express'
 import multer from 'multer'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
+import { LLMMerger } from '../lib/llmMerger'
 
 const router = express.Router()
 
@@ -28,6 +29,12 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     const { type, mode = 'new' } = req.body // type: 'person' | 'relationship' | 'place' | 'event'
+    console.info('[import] batch start', {
+      filename: req.file.originalname,
+      size: req.file.size,
+      type,
+      mode,
+    })
 
     if (!type) {
       return res.status(400).json({ error: '请指定导入类型' })
@@ -37,13 +44,20 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
     let data: any[]
     try {
       const fileContent = req.file.buffer.toString('utf-8')
-      data = JSON.parse(fileContent)
+      const parsed = JSON.parse(fileContent)
+      
+      // 支持两种格式：
+      // 1. 直接是数组: [...]
+      // 2. 包装格式: { data: [...], type: "...", ... }
+      if (Array.isArray(parsed)) {
+        data = parsed
+      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.data)) {
+        data = parsed.data
+      } else {
+        return res.status(400).json({ error: 'JSON 文件必须是数组格式或包含 data 字段的对象' })
+      }
     } catch (error) {
       return res.status(400).json({ error: 'JSON 文件格式错误' })
-    }
-
-    if (!Array.isArray(data)) {
-      return res.status(400).json({ error: 'JSON 文件必须是数组格式' })
     }
 
     // 验证数据格式
@@ -64,26 +78,132 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
         validItems.push(item)
       }
     }
+    console.info('[import] validate done', {
+      total: data.length,
+      valid: validItems.length,
+      errors: errors.length,
+    })
+
+    // 使用 LLM 检测重复（仅对人物类型）
+    let duplicateChecks: any[] = []
+    if (type.toLowerCase() === 'person') {
+      // 获取所有已审核通过的人物
+      const existingPersons = await prisma.person.findMany({
+        where: {
+          status: {
+            in: ['APPROVED', 'PUBLISHED'],
+          },
+        },
+      })
+
+      const merger = new LLMMerger()
+
+      // 检查每个待导入的人物
+      duplicateChecks = await Promise.all(
+        validItems.map(async (item: any) => {
+          // 查找可能的匹配（基于姓名和别名）
+          const possibleMatches = existingPersons.filter((p) => {
+            const nameMatch = p.name === item.name
+            const aliasMatch =
+              p.aliases.includes(item.name) ||
+              (item.aliases || []).some((alias: string) => p.aliases.includes(alias)) ||
+              (item.aliases || []).includes(p.name)
+            return nameMatch || aliasMatch
+          })
+
+          if (possibleMatches.length === 0) {
+            return {
+              itemIndex: validItems.indexOf(item),
+              isDuplicate: false,
+              matchingPersonId: null,
+              confidence: 0,
+              reasons: [],
+            }
+          }
+
+          // 对每个可能的匹配，使用 LLM 判断
+          let bestMatch: any = null
+          let bestConfidence = 0
+
+          for (const existing of possibleMatches) {
+            try {
+              const mergeResult = await merger.mergePerson(existing, item)
+              if (mergeResult.shouldMerge && mergeResult.confidence > bestConfidence) {
+                bestConfidence = mergeResult.confidence
+                bestMatch = {
+                  personId: existing.id,
+                  confidence: mergeResult.confidence,
+                  reason: mergeResult.reason,
+                }
+              }
+            } catch (error) {
+              console.error('LLM 融合检查错误:', error)
+            }
+          }
+
+          return {
+            itemIndex: validItems.indexOf(item),
+            isDuplicate: bestMatch !== null && bestConfidence >= 0.5,
+            matchingPersonId: bestMatch?.personId || null,
+            confidence: bestConfidence,
+            reasons: bestMatch ? [bestMatch.reason] : [],
+          }
+        })
+      )
+    }
 
     // 创建 ReviewItem 记录
     const reviewItems = await Promise.all(
-      validItems.map((item) =>
-        prisma.reviewItem.create({
+      validItems.map((item, index) => {
+        const duplicateCheck = duplicateChecks[index]
+        return prisma.reviewItem.create({
           data: {
             type: type.toUpperCase(),
             status: 'PENDING',
             source: 'LLM_EXTRACT',
             originalData: item,
+            // 如果有匹配的人物，在 originalData 中添加标记
+            // 注意：这里我们暂时在 originalData 中添加，后续可以考虑添加数据库字段
           },
         })
-      )
+      })
     )
 
+    // 为有重复的 ReviewItem 添加标记（通过更新 originalData）
+    for (let i = 0; i < reviewItems.length; i++) {
+      const duplicateCheck = duplicateChecks[i]
+      if (duplicateCheck && duplicateCheck.isDuplicate) {
+        const updatedData = {
+          ...reviewItems[i].originalData,
+          _duplicateCheck: {
+            isDuplicate: true,
+            matchingPersonId: duplicateCheck.matchingPersonId,
+            confidence: duplicateCheck.confidence,
+            reasons: duplicateCheck.reasons,
+          },
+        }
+        await prisma.reviewItem.update({
+          where: { id: reviewItems[i].id },
+          data: { originalData: updatedData },
+        })
+      }
+    }
+
+    // 统计重复数量
+    const duplicateCount = duplicateChecks.filter((c) => c?.isDuplicate).length
+
+    console.info('[import] batch success', {
+      total: data.length,
+      successCount: validItems.length,
+      errorCount: errors.length,
+      duplicateCount,
+    })
     res.json({
       success: true,
       total: data.length,
       successCount: validItems.length,
       errorCount: errors.length,
+      duplicateCount,
       errors: errors.slice(0, 10), // 只返回前 10 个错误
       reviewItems: reviewItems.map((item) => ({
         id: item.id,
@@ -91,7 +211,10 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
       })),
     })
   } catch (error) {
-    console.error('Batch import error:', error)
+    console.error('[import] batch error', {
+      message: (error as any)?.message,
+      stack: (error as any)?.stack,
+    })
     res.status(500).json({ error: 'Internal server error' })
   }
 })

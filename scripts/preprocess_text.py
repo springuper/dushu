@@ -31,22 +31,37 @@ def preprocess_text(input_file: str, output_file: str, source_info: dict = None)
     title_match = re.search(r'^#+\s*(.+)$', content, re.MULTILINE)
     title = title_match.group(1) if title_match else Path(input_file).stem
     
+    # 跳过文件开头的元数据部分（直到 "---" 分隔线）
+    lines = content.split('\n')
+    start_index = 0
+    for i, line in enumerate(lines):
+        if line.strip() == '---':
+            start_index = i + 1
+            break
+    
+    # 从分隔线后开始处理
+    content_lines = lines[start_index:]
+    
     # 按段落分割（空行分隔）
     paragraphs = []
     current_paragraph = []
     
-    for line in content.split('\n'):
+    for line in content_lines:
         line = line.strip()
         
-        # 跳过空行和标题行
+        # 跳过空行和标题行（Markdown 格式）
         if not line or line.startswith('#'):
             if current_paragraph:
                 paragraphs.append('\n'.join(current_paragraph))
                 current_paragraph = []
             continue
         
-        # 跳过来源信息行（如果存在）
-        if line.startswith('来源：') or line.startswith('获取渠道：') or line.startswith('获取日期：'):
+        # 跳过元数据行
+        if any(line.startswith(prefix) for prefix in ['来源：', '获取渠道：', '获取日期：', 'URL：', '版权状态：']):
+            continue
+        
+        # 跳过分隔线
+        if line == '---':
             continue
         
         current_paragraph.append(line)
@@ -55,8 +70,8 @@ def preprocess_text(input_file: str, output_file: str, source_info: dict = None)
     if current_paragraph:
         paragraphs.append('\n'.join(current_paragraph))
     
-    # 过滤空段落
-    paragraphs = [p for p in paragraphs if p.strip()]
+    # 过滤空段落和太短的段落（可能是残留的元数据）
+    paragraphs = [p for p in paragraphs if p.strip() and len(p.strip()) > 10]
     
     # 构建输出数据
     output_data = {

@@ -13,6 +13,23 @@ echo ""
 
 cd "$PROJECT_ROOT"
 
+# 检查 .env 文件
+if [ ! -f ".env" ]; then
+    echo "⚠️  .env 文件不存在"
+    echo ""
+    read -p "是否从 .env.example 创建 .env 文件？(y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if [ -f ".env.example" ]; then
+            cp .env.example .env
+            echo "✅ 已创建 .env 文件，请编辑并填入 API Key"
+        else
+            echo "❌ 错误: .env.example 文件不存在"
+        fi
+    fi
+    echo ""
+fi
+
 # 检查是否已有虚拟环境
 if [ ! -d "venv" ]; then
     echo "创建虚拟环境..."

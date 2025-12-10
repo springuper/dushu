@@ -32,14 +32,30 @@
 npm run install:all
 ```
 
-#### 2. 生成 Prisma Client（首次使用或更新 schema 后）
+#### 2. 启动数据库
+
+**使用 Podman Compose（推荐）**：
+```bash
+# 启动 PostgreSQL 数据库
+podman compose up -d
+# 或使用: podman-compose up -d
+```
+
+**使用本地 PostgreSQL**：
+确保 PostgreSQL 已安装并运行，并创建数据库：
+```bash
+createdb dushu
+```
+
+#### 3. 运行数据库迁移
 
 ```bash
 cd backend
+npx prisma migrate dev --name init
 npx prisma generate
 ```
 
-#### 3. 启动开发服务器
+#### 4. 启动开发服务器
 
 ```bash
 # 在项目根目录，同时启动前端和后端
@@ -50,7 +66,9 @@ npm run dev
 - 前端：http://localhost:5173（如果被占用会自动使用下一个端口）
 - 后端：http://localhost:3001
 
-#### 3. 单独启动（可选）
+**注意**：确保数据库已启动（见步骤 2），否则后端将无法连接数据库。
+
+#### 5. 单独启动（可选）
 
 如果需要单独启动某个服务：
 
@@ -92,6 +110,8 @@ npx prisma migrate dev --name init
 
 ### 环境变量
 
+#### 后端环境变量
+
 后端需要创建 `.env` 文件（已自动生成）：
 
 ```env
@@ -102,18 +122,44 @@ NODE_ENV=development
 
 **注意**：如果使用 Podman Compose，`DATABASE_URL` 已配置为默认值。如果使用本地 PostgreSQL，请根据实际情况修改。
 
+#### Python 脚本环境变量（数据准备）
+
+数据准备脚本使用 `.env` 文件管理 API Key：
+
+```bash
+# 从模板创建 .env 文件
+./scripts/setup_env.sh
+
+# 编辑 .env 文件，填入 API Key
+nano .env
+```
+
+在 `.env` 文件中设置：
+
+```env
+# Google Gemini API（推荐）
+GOOGLE_API_KEY=your-api-key-here
+
+# 或 OpenAI API
+OPENAI_API_KEY=your-api-key-here
+```
+
+**注意**：`.env` 文件已加入 `.gitignore`，不会被提交到 Git。参考 `.env.example` 了解所有可配置项。
+
 ## 项目结构
 
 ```
 dushu/
 ├── frontend/          # 前端项目（Vite + React + TypeScript）
 ├── backend/           # 后端项目（Express + TypeScript + Prisma）
-├── docs/              # 项目文档
+├── specs/             # 产品规格文档（Spec）
+│   ├── reading-app-spec.md              # 主产品规格
+│   └── data-acquisition-and-merge-spec.md  # 数据获取与融合规格
+├── docs/              # 项目文档（使用指南、开发文档）
 │   ├── setup/         # 设置和快速开始指南
 │   ├── development/   # 开发相关文档（路线图等）
 │   ├── data/          # 数据相关文档（数据来源、推荐书籍等）
 │   └── testing/       # 测试相关文档
-├── specs/             # 产品规格文档
 ├── scripts/           # 工具脚本（LLM 提取、Playwright 下载等）
 ├── venv/              # Python 虚拟环境（自动生成，已加入 .gitignore）
 ├── data/              # 数据目录（原始文本、处理后的数据等）
@@ -172,12 +218,38 @@ deactivate
   - ✅ 批量导入功能
   - ✅ 内容管理基础（人物/关系/地点/事件）
   - ✅ LLM 批量提取脚本
+  - ✅ LLM 驱动的数据融合
+  - ✅ 变更日志系统
 
 **下一步**：
 - 🔄 夯实 Milestone 1 & 2 功能
 - 📚 准备历史书籍数据（详见 [docs/data/DATA_SOURCES.md](./docs/data/DATA_SOURCES.md)）
 
 详见 [docs/development/roadmap.md](./docs/development/roadmap.md)
+
+## 文档导航
+
+### 产品规格（Specs）
+
+- **[specs/reading-app-spec.md](./specs/reading-app-spec.md)** - 主产品规格书
+- **[specs/data-acquisition-and-merge-spec.md](./specs/data-acquisition-and-merge-spec.md)** - 数据获取与融合规格书
+
+### 使用指南
+
+- **[docs/setup/QUICK_START.md](./docs/setup/QUICK_START.md)** - 快速开始指南
+- **[docs/data/DATA_SOURCES.md](./docs/data/DATA_SOURCES.md)** - 数据来源说明
+- **[docs/data/RECOMMENDED_BOOKS.md](./docs/data/RECOMMENDED_BOOKS.md)** - 推荐书籍
+- **[scripts/prepare_data.md](./scripts/prepare_data.md)** - 数据准备流程（快速参考）
+- **[scripts/INCREMENTAL_WORKFLOW.md](./scripts/INCREMENTAL_WORKFLOW.md)** - 渐进式工作流指南
+
+### 开发文档
+
+- **[docs/development/roadmap.md](./docs/development/roadmap.md)** - 开发路线图
+- **[docs/testing/TESTING.md](./docs/testing/TESTING.md)** - 测试指南
+
+### 工具脚本
+
+- **[scripts/README.md](./scripts/README.md)** - 脚本使用说明
 
 ## 数据来源
 
@@ -191,7 +263,8 @@ deactivate
 
 **推荐书籍**（聚焦秦汉/西汉）：请查看 [docs/data/RECOMMENDED_BOOKS.md](./docs/data/RECOMMENDED_BOOKS.md)
 
-**数据准备流程**：请查看 [scripts/prepare_data.md](./scripts/prepare_data.md)
+**数据准备流程**：
+- 技术规范：请查看 [specs/data-acquisition-and-merge-spec.md](./specs/data-acquisition-and-merge-spec.md)
+- 操作指南：请查看 [scripts/prepare_data.md](./scripts/prepare_data.md) 和 [scripts/INCREMENTAL_WORKFLOW.md](./scripts/INCREMENTAL_WORKFLOW.md)
 
 **测试指南**：请查看 [docs/testing/TESTING.md](./docs/testing/TESTING.md)
-

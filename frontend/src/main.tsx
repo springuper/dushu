@@ -27,15 +27,15 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <MantineProvider>
+    <MantineProvider>
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
           <Notifications />
           <BrowserRouter>
             <App />
           </BrowserRouter>
-        </MantineProvider>
-      </QueryClientProvider>
-    </ErrorBoundary>
+        </QueryClientProvider>
+      </ErrorBoundary>
+    </MantineProvider>
   </StrictMode>,
 )

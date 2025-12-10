@@ -65,14 +65,23 @@ function ReviewPage() {
     },
   })
 
-  // 批量操作
-  const batchMutation = useMutation({
-    mutationFn: async ({ ids, action, notes }: { ids: string[]; action: string; notes?: string }) => {
-      const response = await api.post('/api/admin/review/items/batch', {
-        ids,
-        action,
-        notes,
-      })
+  // 批量通过
+  const batchApproveMutation = useMutation({
+    mutationFn: async ({ ids, notes }: { ids: string[]; notes?: string }) => {
+      const response = await api.post('/api/admin/review/batch-approve', { ids, notes })
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review'] })
+      setActionModal({ open: false, action: null, ids: [] })
+      setSelectedIds([])
+    },
+  })
+
+  // 批量拒绝
+  const batchRejectMutation = useMutation({
+    mutationFn: async ({ ids, notes }: { ids: string[]; notes?: string }) => {
+      const response = await api.post('/api/admin/review/batch-reject', { ids, notes })
       return response.data
     },
     onSuccess: () => {
@@ -88,12 +97,10 @@ function ReviewPage() {
   }
 
   const handleConfirmAction = (notes?: string) => {
-    if (actionModal.action && actionModal.ids.length > 0) {
-      batchMutation.mutate({
-        ids: actionModal.ids,
-        action: actionModal.action,
-        notes,
-      })
+    if (actionModal.action === 'approve' && actionModal.ids.length > 0) {
+      batchApproveMutation.mutate({ ids: actionModal.ids, notes })
+    } else if (actionModal.action === 'reject' && actionModal.ids.length > 0) {
+      batchRejectMutation.mutate({ ids: actionModal.ids, notes })
     }
   }
 
@@ -132,6 +139,7 @@ function ReviewPage() {
             color="green"
             onClick={() => handleBatchAction('approve')}
             disabled={selectedIds.length === 0}
+            loading={batchApproveMutation.isPending}
           >
             批量通过 ({selectedIds.length})
           </Button>
@@ -139,6 +147,7 @@ function ReviewPage() {
             color="red"
             onClick={() => handleBatchAction('reject')}
             disabled={selectedIds.length === 0}
+            loading={batchRejectMutation.isPending}
           >
             批量拒绝 ({selectedIds.length})
           </Button>
@@ -270,6 +279,11 @@ function ReviewPage() {
         <Stack>
           <Text>
             确定要{actionModal.action === 'approve' ? '通过' : '拒绝'} {actionModal.ids.length} 个项目吗？
+            {actionModal.action === 'approve' && (
+              <Text size="sm" c="dimmed" mt="xs" component="div">
+                通过后将直接发布（状态设为 PUBLISHED）
+              </Text>
+            )}
           </Text>
           <Textarea
             label="备注（可选）"
@@ -289,7 +303,9 @@ function ReviewPage() {
                 const notes = (document.getElementById('batch-notes') as HTMLTextAreaElement)?.value
                 handleConfirmAction(notes)
               }}
-              loading={batchMutation.isPending}
+              loading={
+                batchApproveMutation.isPending || batchRejectMutation.isPending
+              }
             >
               确认
             </Button>

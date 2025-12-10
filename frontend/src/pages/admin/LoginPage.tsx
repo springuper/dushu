@@ -4,6 +4,7 @@ import {
   Container,
   Paper,
   Title,
+  Text,
   TextInput,
   PasswordInput,
   Button,

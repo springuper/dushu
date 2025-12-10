@@ -1,8 +1,14 @@
 # Python 依赖包
 # 用于数据准备脚本
 
-# LLM 提取
+# 环境变量管理
+python-dotenv>=1.0.0
+
+# LLM 提取（选择其一或两者都安装）
+# OpenAI
 openai>=1.0.0
+# Google Gemini
+google-generativeai>=0.3.0
 
 # 网页自动化下载
 playwright>=1.40.0

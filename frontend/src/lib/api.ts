@@ -14,6 +14,10 @@ export const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     console.log('API Request:', config.method?.toUpperCase(), config.url)
+    // 如果是 FormData，删除 Content-Type 头，让浏览器自动设置 multipart/form-data
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type']
+    }
     return config
   },
   (error) => {
@@ -42,6 +46,32 @@ api.interceptors.response.use(
 // API 方法
 export const healthCheck = async () => {
   const response = await api.get('/api/health')
+  return response.data
+}
+
+// 获取已发布的书籍列表
+export const getPublishedBooks = async () => {
+  const response = await api.get('/api/books', {
+    params: { status: 'PUBLISHED' },
+  })
+  return response.data
+}
+
+// 根据 ID 获取书籍详情（包含章节列表）
+export const getBookById = async (id: string) => {
+  const response = await api.get(`/api/books/id/${id}`)
+  return response.data
+}
+
+// 根据 nameEn 获取书籍详情（包含章节列表）
+export const getBookByNameEn = async (nameEn: string) => {
+  const response = await api.get(`/api/books/${nameEn}`)
+  return response.data
+}
+
+// 获取章节详情（包含段落）
+export const getChapterById = async (id: string) => {
+  const response = await api.get(`/api/chapters/${id}`)
   return response.data
 }
 

@@ -11,6 +11,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "create-admin": "tsx scripts/create-admin.ts",
+    "reprocess-approved": "tsx scripts/reprocess-approved-items.ts",
+    "studio": "prisma studio",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -18,18 +20,22 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "6.19.0",
     "bcrypt": "^6.0.0",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "multer": "^2.0.2",
+    "openai": "^6.10.0",
     "pg": "^8.16.3",
     "prisma": "6.19.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
+    "@types/connect-pg-simple": "^7.0.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/express-session": "^1.18.2",

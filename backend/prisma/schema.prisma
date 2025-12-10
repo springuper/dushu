@@ -63,19 +63,43 @@ enum ContentStatus {
   REJECTED   // 已拒绝
 }
 
+// 书籍
+model Book {
+  id            String    @id @default(uuid())
+  name          String    // 书名，如 "史记"
+  nameEn        String?   // 英文名/拼音，如 "shiji"
+  author        String?   // 作者，如 "司马迁"
+  dynasty       String?   // 朝代，如 "西汉"
+  writtenYear   String?   // 成书年代，如 "公元前91年"
+  description   String?   @db.Text // 书籍简介
+  sourceUrl     String?   // 来源链接，如维基文库URL
+  totalChapters Int       @default(0) // 总章节数
+  status        ContentStatus @default(DRAFT)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  chapters      Chapter[]
+
+  @@unique([nameEn])
+  @@index([name])
+  @@index([status])
+}
+
 // 章节
 model Chapter {
   id             String   @id @default(uuid())
-  bookId         String   // 书籍ID, 如 "shiji"
+  bookId         String   // 书籍ID
   title          String   // 章节标题
   summary        String   @db.Text // 章节简介
   order          Int      // 章节顺序
   totalParagraphs Int     @default(0) // 段落总数
   timeRangeStart String?  // 时间范围开始, 如 "公元前256年"
   timeRangeEnd   String?  // 时间范围结束
+  sourceUrl      String?  // 来源链接
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  book           Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
   paragraphs     Paragraph[]
   events         Event[]     @relation("ChapterEvents")
 
@@ -349,4 +373,31 @@ enum ReviewStatus {
 enum ReviewSource {
   LLM_EXTRACT // LLM 提取
   MANUAL      // 手动录入
+}
+
+// 变更日志（记录所有数据变更）
+model ChangeLog {
+  id            String        @id @default(uuid())
+  entityType    String        // 实体类型：PERSON, PLACE, EVENT, RELATIONSHIP
+  entityId      String        // 实体ID
+  action        ChangeAction  // 变更操作
+  version       Int           @default(1) // 版本号
+  previousData  Json?         // 变更前的数据（完整快照）
+  currentData   Json          // 变更后的数据（完整快照）
+  changes       Json?         // 变更详情（diff，可选）
+  changedBy     String?       // 变更人ID（管理员ID）
+  changeReason  String?       @db.Text // 变更原因
+  mergedFrom    String[]      // 如果是从其他记录合并而来，记录源记录ID
+  createdAt     DateTime      @default(now())
+
+  @@index([entityType, entityId])
+  @@index([entityType, entityId, version])
+  @@index([createdAt])
+}
+
+enum ChangeAction {
+  CREATE      // 创建
+  UPDATE      // 更新
+  MERGE       // 合并
+  DELETE      // 删除
 }

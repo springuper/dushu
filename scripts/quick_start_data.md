@@ -104,18 +104,47 @@ python scripts/preprocess_text.py \
 
 ### 步骤 3：提取人物数据
 
+**首先设置 API Key**
+
+```bash
+# 方法 1：使用 .env 文件（推荐）
+./scripts/setup_env.sh
+# 然后编辑 .env 文件，填入 GOOGLE_API_KEY 或 OPENAI_API_KEY
+
+# 方法 2：直接设置环境变量
+export GOOGLE_API_KEY="your-api-key"
+# 或
+export OPENAI_API_KEY="your-api-key"
+```
+
+**然后提取数据**
+
+```bash
+# 提取所有类型数据
+./scripts/extract_data.sh data/raw/shiji/shiji_01_gaozu_benji.txt all
+
+# 或只提取人物
+./scripts/extract_data.sh data/raw/shiji/shiji_01_gaozu_benji.txt person
+```
+
+**方法 2：手动提取**
+
 ```bash
 # 确保虚拟环境已激活
 source venv/bin/activate
 
-# 设置 API Key（如果还没有）
-export OPENAI_API_KEY="your-api-key"
+# 设置 API Key（使用 Gemini，推荐）
+export GOOGLE_API_KEY="your-api-key"
 
-# 提取人物
+# 或使用 OpenAI
+# export OPENAI_API_KEY="your-api-key"
+
+# 提取人物（使用 Gemini）
 python scripts/extract_with_llm.py \
   --input data/raw/shiji/shiji_01_gaozu_benji.txt \
   --type person \
-  --output data/extracted/persons/shiji_01_persons.json
+  --output data/extracted/persons/shiji_01_gaozu_benji_persons.json \
+  --provider gemini
 ```
 
 **预期输出**：

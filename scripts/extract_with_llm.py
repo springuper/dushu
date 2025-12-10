@@ -3,6 +3,8 @@
 LLM 批量提取脚本
 从历史文本中提取人物、关系、地点、事件数据
 
+支持 OpenAI 和 Google Gemini API
+
 使用方法:
     python extract_with_llm.py --input chapters.txt --type person --output extracted_persons.json
 """
@@ -10,33 +12,85 @@ LLM 批量提取脚本
 import json
 import argparse
 import os
+from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
 
-# 注意：需要安装 openai 库
-# pip install openai
+# 加载环境变量
+from dotenv import load_dotenv
+
+# 加载 .env 文件（从项目根目录）
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+
+# 检测可用的 API
+USE_GEMINI = False
+USE_OPENAI = False
+
+try:
+    import google.generativeai as genai
+    USE_GEMINI = True
+except ImportError:
+    pass
+
 try:
     from openai import OpenAI
+    USE_OPENAI = True
 except ImportError:
-    print("错误: 请先安装 openai 库: pip install openai")
+    pass
+
+if not USE_GEMINI and not USE_OPENAI:
+    print("错误: 请安装以下任一库:")
+    print("  - Google Gemini: pip install google-generativeai")
+    print("  - OpenAI: pip install openai")
     exit(1)
 
 
 class LLMExtractor:
-    def __init__(self, api_key: str = None, base_url: str = None, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = None, provider: str = "auto"):
         """
         初始化 LLM 提取器
         
         Args:
-            api_key: OpenAI API Key（如果使用 OpenAI）
-            base_url: 自定义 API 地址（如果使用兼容 OpenAI 的 API）
+            api_key: API Key（OpenAI 或 Gemini）
+            base_url: 自定义 API 地址（仅 OpenAI）
             model: 模型名称
+            provider: API 提供商 ("openai", "gemini", "auto")
         """
-        self.client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY"),
-            base_url=base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        )
+        self.provider = provider
+        self.api_key = api_key
+        self.base_url = base_url
         self.model = model
+        
+        # 自动检测提供商
+        if provider == "auto":
+            if USE_GEMINI and (api_key or os.getenv("GOOGLE_API_KEY")):
+                self.provider = "gemini"
+            elif USE_OPENAI and (api_key or os.getenv("OPENAI_API_KEY")):
+                self.provider = "openai"
+            else:
+                # 根据可用的库选择
+                if USE_GEMINI:
+                    self.provider = "gemini"
+                elif USE_OPENAI:
+                    self.provider = "openai"
+                else:
+                    raise ValueError("没有可用的 API 库")
+        
+        # 初始化对应的客户端
+        if self.provider == "gemini":
+            genai_key = api_key or os.getenv("GOOGLE_API_KEY")
+            if not genai_key:
+                raise ValueError("需要设置 GOOGLE_API_KEY 环境变量或通过 --api-key 参数提供")
+            genai.configure(api_key=genai_key)
+            self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            self.client = genai.GenerativeModel(self.model)
+        else:  # OpenAI
+            self.client = OpenAI(
+                api_key=api_key or os.getenv("OPENAI_API_KEY"),
+                base_url=base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            )
+            self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     def extract_persons(self, text: str) -> List[Dict[str, Any]]:
         """提取人物信息"""
@@ -76,16 +130,27 @@ class LLMExtractor:
 ]
 """
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取结构化数据。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-        )
-
-        content = response.choices[0].message.content.strip()
+        if self.provider == "gemini":
+            # Gemini API
+            full_prompt = f"你是一个专业的历史文本分析助手，擅长从文本中提取结构化数据。\n\n{prompt}"
+            response = self.client.generate_content(
+                full_prompt,
+                generation_config={
+                    "temperature": 0.3,
+                }
+            )
+            content = response.text.strip()
+        else:
+            # OpenAI API
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取结构化数据。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+            )
+            content = response.choices[0].message.content.strip()
         
         # 尝试提取 JSON（可能包含 markdown 代码块）
         if content.startswith("```"):
@@ -140,16 +205,25 @@ class LLMExtractor:
 ]
 """
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取人物关系。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-        )
-
-        content = response.choices[0].message.content.strip()
+        if self.provider == "gemini":
+            full_prompt = f"你是一个专业的历史文本分析助手，擅长从文本中提取人物关系。\n\n{prompt}"
+            response = self.client.generate_content(
+                full_prompt,
+                generation_config={
+                    "temperature": 0.3,
+                }
+            )
+            content = response.text.strip()
+        else:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取人物关系。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+            )
+            content = response.choices[0].message.content.strip()
         if content.startswith("```"):
             lines = content.split("\n")
             content = "\n".join(lines[1:-1]) if lines[-1].startswith("```") else "\n".join(lines[1:])
@@ -196,16 +270,25 @@ class LLMExtractor:
 ]
 """
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取地理信息。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-        )
-
-        content = response.choices[0].message.content.strip()
+        if self.provider == "gemini":
+            full_prompt = f"你是一个专业的历史文本分析助手，擅长从文本中提取地理信息。\n\n{prompt}"
+            response = self.client.generate_content(
+                full_prompt,
+                generation_config={
+                    "temperature": 0.3,
+                }
+            )
+            content = response.text.strip()
+        else:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取地理信息。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+            )
+            content = response.choices[0].message.content.strip()
         if content.startswith("```"):
             lines = content.split("\n")
             content = "\n".join(lines[1:-1]) if lines[-1].startswith("```") else "\n".join(lines[1:])
@@ -253,16 +336,25 @@ class LLMExtractor:
 ]
 """
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取历史事件。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-        )
-
-        content = response.choices[0].message.content.strip()
+        if self.provider == "gemini":
+            full_prompt = f"你是一个专业的历史文本分析助手，擅长从文本中提取历史事件。\n\n{prompt}"
+            response = self.client.generate_content(
+                full_prompt,
+                generation_config={
+                    "temperature": 0.3,
+                }
+            )
+            content = response.text.strip()
+        else:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的历史文本分析助手，擅长从文本中提取历史事件。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+            )
+            content = response.choices[0].message.content.strip()
         if content.startswith("```"):
             lines = content.split("\n")
             content = "\n".join(lines[1:-1]) if lines[-1].startswith("```") else "\n".join(lines[1:])
@@ -281,9 +373,11 @@ def main():
     parser.add_argument("--type", "-t", required=True, choices=["person", "relationship", "place", "event"],
                        help="提取类型")
     parser.add_argument("--output", "-o", required=True, help="输出 JSON 文件路径")
-    parser.add_argument("--api-key", help="OpenAI API Key（或设置 OPENAI_API_KEY 环境变量）")
-    parser.add_argument("--base-url", help="自定义 API 地址（或设置 OPENAI_BASE_URL 环境变量）")
-    parser.add_argument("--model", default="gpt-4o-mini", help="模型名称（默认: gpt-4o-mini）")
+    parser.add_argument("--api-key", help="API Key（OpenAI 或 Gemini，或设置环境变量）")
+    parser.add_argument("--base-url", help="自定义 API 地址（仅 OpenAI，或设置 OPENAI_BASE_URL 环境变量）")
+    parser.add_argument("--model", help="模型名称（默认: OpenAI=gpt-4o-mini, Gemini=gemini-2.5-flash）")
+    parser.add_argument("--provider", choices=["openai", "gemini", "auto"], default="auto", 
+                       help="API 提供商（默认: auto，自动检测）")
     parser.add_argument("--persons-file", help="人物 JSON 文件路径（提取关系时需要）")
 
     args = parser.parse_args()
@@ -297,7 +391,12 @@ def main():
         return 1
 
     # 初始化提取器
-    extractor = LLMExtractor(api_key=args.api_key, base_url=args.base_url, model=args.model)
+    extractor = LLMExtractor(
+        api_key=args.api_key, 
+        base_url=args.base_url, 
+        model=args.model,
+        provider=args.provider
+    )
 
     # 读取人物数据（如果需要）
     persons = None

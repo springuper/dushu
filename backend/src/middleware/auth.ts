@@ -17,9 +17,12 @@ export const requireAuth = (
   res: Response,
   next: NextFunction
 ) => {
+  console.log('[auth] checking auth for', req.method, req.path, 'adminId:', req.session?.adminId)
   if (!req.session?.adminId) {
+    console.log('[auth] unauthorized, returning 401')
     return res.status(401).json({ error: 'Unauthorized' })
   }
+  console.log('[auth] authorized, calling next()')
   next()
 }
 
