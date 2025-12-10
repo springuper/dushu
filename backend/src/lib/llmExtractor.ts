@@ -101,8 +101,8 @@ export class LLMExtractor {
       textPreview: chapterText.substring(0, 150).replace(/\n/g, ' ') + '...',
     })
 
-    // Step 1: 分块
-    const chunks = this.chunkParagraphs(paragraphs, chapterText)
+    // Step 1: 分块（带段落ID）
+    const { chunks, chunkParagraphIds } = this.chunkParagraphsWithIds(paragraphs, chapterText)
     const chunkSizes = chunks.map(c => c.length)
     logger.info('Step 1/3: Text chunked', {
       chunks: chunks.length,
@@ -110,12 +110,13 @@ export class LLMExtractor {
       chunkSizes,
       minChunk: Math.min(...chunkSizes),
       maxChunk: Math.max(...chunkSizes),
+      paragraphsPerChunk: chunkParagraphIds.map(ids => ids.length),
     })
 
-    // Step 2: 提取事件
+    // Step 2: 提取事件（带段落关联）
     logger.info('Step 2/3: Extracting events...')
     const eventStartTime = Date.now()
-    const { events, truncatedEvents } = await this.extractEvents(chunks)
+    const { events, truncatedEvents } = await this.extractEvents(chunks, chunkParagraphIds, paragraphs)
     const eventDuration = Date.now() - eventStartTime
     
     logger.info('Step 2/3: Events extraction done', {
@@ -182,33 +183,62 @@ export class LLMExtractor {
   }
 
   /**
-   * 分段：按段落堆叠，尽量保持 4k-6k token 等效大小
+   * 分段结果，包含段落ID映射
    */
-  private chunkParagraphs(paragraphs: ParagraphInput[], fallbackText: string): string[] {
+  private chunkParagraphsWithIds(paragraphs: ParagraphInput[], fallbackText: string): { 
+    chunks: string[]
+    chunkParagraphIds: string[][] // 每个 chunk 包含的段落 ID 列表
+  } {
     if (!paragraphs.length) {
-      return [fallbackText]
+      return { chunks: [fallbackText], chunkParagraphIds: [[]] }
     }
+    
     const chunks: string[] = []
+    const chunkParagraphIds: string[][] = []
     let buffer = ''
+    let currentIds: string[] = []
+    
     for (const para of paragraphs) {
       const text = para.text || ''
+      const paraId = para.id || `para-${para.order || 0}`
       const candidate = buffer ? `${buffer}\n\n${text}` : text
       const limit = buffer.length > 0 ? LONG_WINDOW_CHARS : MAX_WINDOW_CHARS
+      
       if (candidate.length > limit && buffer) {
         chunks.push(buffer)
+        chunkParagraphIds.push(currentIds)
         buffer = text
+        currentIds = [paraId]
       } else {
         buffer = candidate
+        currentIds.push(paraId)
       }
     }
-    if (buffer) chunks.push(buffer)
-    return chunks
+    
+    if (buffer) {
+      chunks.push(buffer)
+      chunkParagraphIds.push(currentIds)
+    }
+    
+    return { chunks, chunkParagraphIds }
   }
 
   /**
-   * 提取事件（包含内嵌的 actors 和地点信息）
+   * 分段：按段落堆叠，尽量保持 4k-6k token 等效大小
+   * @deprecated 使用 chunkParagraphsWithIds 代替
    */
-  private async extractEvents(chunks: string[]): Promise<{ events: ExtractedEvent[]; truncatedEvents: string[] }> {
+  private chunkParagraphs(paragraphs: ParagraphInput[], fallbackText: string): string[] {
+    return this.chunkParagraphsWithIds(paragraphs, fallbackText).chunks
+  }
+
+  /**
+   * 提取事件（包含内嵌的 actors 和地点信息，以及段落关联）
+   */
+  private async extractEvents(
+    chunks: string[], 
+    chunkParagraphIds: string[][],
+    paragraphs: ParagraphInput[]
+  ): Promise<{ events: ExtractedEvent[]; truncatedEvents: string[] }> {
     const allEvents: ExtractedEvent[] = []
     const allTruncated: string[] = []
     const startTime = Date.now()
@@ -217,13 +247,22 @@ export class LLMExtractor {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]
-      const prompt = this.buildEventPrompt(chunk)
+      const paragraphIds = chunkParagraphIds[i] || []
+      
+      // 获取该 chunk 中的段落（带ID）用于提示词
+      const chunkParagraphs = paragraphIds.map(id => {
+        const para = paragraphs.find(p => p.id === id)
+        return para ? { id, text: para.text } : null
+      }).filter(Boolean) as { id: string; text: string }[]
+      
+      const prompt = this.buildEventPrompt(chunk, chunkParagraphs)
       const chunkStartTime = Date.now()
       
       logger.info(`Processing chunk ${i + 1}/${chunks.length} for events`, {
         chunkIndex: i + 1,
         totalChunks: chunks.length,
         chunkLength: chunk.length,
+        paragraphCount: paragraphIds.length,
         chunkPreview: chunk.substring(0, 100).replace(/\n/g, ' ') + '...',
       })
       
@@ -239,9 +278,11 @@ export class LLMExtractor {
           allEvents.push(...result.events)
           // 记录提取到的事件名称
           const eventNames = result.events.map(e => e.name).slice(0, 5)
+          const eventsWithParagraphs = result.events.filter(e => e.relatedParagraphs && e.relatedParagraphs.length > 0).length
           logger.info(`Chunk ${i + 1} events extracted`, {
             chunkIndex: i + 1,
             eventsFound: result.events.length,
+            eventsWithParagraphs,
             eventNames: eventNames.length < result.events.length 
               ? [...eventNames, `...+${result.events.length - 5} more`] 
               : eventNames,
@@ -278,9 +319,34 @@ export class LLMExtractor {
   /**
    * 构建事件提取提示词
    */
-  private buildEventPrompt(text: string): string {
-    return `你是历史事件提取专家。请从以下文本中提取重要历史事件。
+  private buildEventPrompt(text: string, paragraphs?: { id: string; text: string }[]): string {
+    // 如果有段落信息，构建段落参考
+    const paragraphSection = paragraphs && paragraphs.length > 0 
+      ? `
 
+## 段落ID参考
+
+以下是文本对应的段落ID，请在提取事件时，将事件关联到相关的段落ID：
+
+${paragraphs.map(p => `[${p.id}] ${p.text.substring(0, 80)}${p.text.length > 80 ? '...' : ''}`).join('\n')}
+`
+      : ''
+
+    const relatedParagraphsField = paragraphs && paragraphs.length > 0
+      ? `"relatedParagraphs": ["段落ID1", "段落ID2"],  // 该事件出现在哪些段落中`
+      : ''
+
+    const relatedParagraphsExample = paragraphs && paragraphs.length > 0
+      ? `"relatedParagraphs": ["para-15", "para-16"],`
+      : ''
+
+    const relatedParagraphsRequirement = paragraphs && paragraphs.length > 0
+      ? `
+8. **段落关联**：将每个事件关联到它出现的段落ID（relatedParagraphs字段），这对于阅读时的定位非常重要`
+      : ''
+
+    return `你是历史事件提取专家。请从以下文本中提取重要历史事件。
+${paragraphSection}
 ## 输出格式（JSON）
 
 {
@@ -295,6 +361,7 @@ export class LLMExtractor {
       "locationModernName": "现代地名（如知道）",
       "summary": "事件摘要（200-400字，要点式）",
       "impact": "历史影响（100-200字，可选）",
+      ${relatedParagraphsField}
       "actors": [
         {
           "name": "人物姓名",
@@ -321,6 +388,7 @@ export class LLMExtractor {
       "locationModernName": "陕西省西安市临潼区",
       "summary": "项羽在鸿门设宴邀请刘邦。范增多次示意项羽杀掉刘邦，但项羽犹豫不决。张良事先得知消息，樊哙闯入护卫。刘邦借如厕之机逃脱，标志着楚汉之争正式开始。",
       "impact": "刘邦成功脱险，保存实力，为日后反败为胜奠定基础。楚汉矛盾公开化，天下进入新的争霸格局。",
+      ${relatedParagraphsExample}
       "actors": [
         {
           "name": "刘邦",
@@ -371,7 +439,7 @@ export class LLMExtractor {
    - OBSERVER: 旁观者/见证者
    - OTHER: 其他
 6. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
-7. **只输出 JSON**，不要其他说明文字
+7. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
 
 ## 待处理文本
 
@@ -566,3 +634,4 @@ ${text.slice(0, 15000)}
     return '你是专业的历史人物研究专家，擅长从古文中提取人物信息。请严格按照 JSON 格式输出，不要添加任何解释性文字。'
   }
 }
+

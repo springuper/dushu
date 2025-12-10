@@ -20,9 +20,10 @@ import {
   Badge,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { getChapterById, getPersons, type Person, type Event } from '../lib/api'
+import * as OpenCC from 'opencc-js'
+import { getChapterById, getPersons, getEventsByChapter, type Person, type Event } from '../lib/api'
 import { useState, useMemo, useRef, useCallback } from 'react'
-import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand } from '@tabler/icons-react'
+import { IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand, IconCalendarEvent } from '@tabler/icons-react'
 import { InfoPanel } from '../components/reading'
 
 interface Paragraph {
@@ -79,12 +80,35 @@ const roleNames: Record<string, string> = {
   OTHER: '其他',
 }
 
+// 繁简转换，避免繁体原文无法匹配简体人物名
+type ConverterFn = (input: string) => string
+let s2tConverter: ConverterFn | null = null
+let t2sConverter: ConverterFn | null = null
+try {
+  const Converter = (OpenCC as any)?.Converter
+  if (Converter) {
+    s2tConverter = Converter({ from: 'cn', to: 't' })
+    t2sConverter = Converter({ from: 't', to: 'cn' })
+  }
+} catch (err) {
+  console.warn('OpenCC init failed, name highlight may miss traditional variants', err)
+}
+
+const nameWithVariants = (name: string): string[] => {
+  const variants = new Set<string>()
+  if (name) variants.add(name)
+  if (s2tConverter) variants.add(s2tConverter(name))
+  if (t2sConverter) variants.add(t2sConverter(name))
+  return Array.from(variants).filter(Boolean)
+}
+
 function ReadingPage() {
   const { chapterId } = useParams<{ chapterId: string }>()
   const navigate = useNavigate()
   const [showInfoPanel, setShowInfoPanel] = useState(true)
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
+  const [activeTab, setActiveTab] = useState('persons')
   const paragraphRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   const { data: chapter, isLoading, error } = useQuery<Chapter>({
@@ -100,18 +124,45 @@ function ReadingPage() {
     queryFn: () => getPersons({ pageSize: 100 }),
   })
 
+  // 获取章节事件列表
+  const { data: events } = useQuery({
+    queryKey: ['events', 'by-chapter', chapterId],
+    queryFn: () => getEventsByChapter(chapterId!),
+    enabled: !!chapterId,
+  })
+
+  // 构建段落ID到事件的映射
+  const paragraphEventsMap = useMemo(() => {
+    const map = new Map<string, Event[]>()
+    if (!events) return map
+    
+    for (const event of events) {
+      if (event.relatedParagraphs) {
+        for (const paragraphId of event.relatedParagraphs) {
+          const existing = map.get(paragraphId) || []
+          existing.push(event)
+          map.set(paragraphId, existing)
+        }
+      }
+    }
+    return map
+  }, [events])
+
   const persons = personsData?.items || []
 
   // 构建人物名称到人物的映射
   const personNameMap = useMemo(() => {
     const map = new Map<string, Person>()
     for (const person of persons) {
-      map.set(person.name, person)
-      for (const alias of person.aliases) {
-        if (!map.has(alias)) {
-          map.set(alias, person)
+      const variants = new Set<string>()
+      nameWithVariants(person.name).forEach(v => variants.add(v))
+      person.aliases.forEach(alias => nameWithVariants(alias).forEach(v => variants.add(v)))
+
+      variants.forEach(v => {
+        if (!map.has(v)) {
+          map.set(v, person)
         }
-      }
+      })
     }
     return map
   }, [persons])
@@ -137,6 +188,31 @@ function ReadingPage() {
       }, 2000)
     }
   }, [])
+
+  // 处理事件点击：选中事件 + 跳转到第一个相关段落
+  const handleEventClick = useCallback((event: Event) => {
+    setSelectedEvent(event)
+    // 如果有相关段落，跳转到第一个
+    if (event.relatedParagraphs && event.relatedParagraphs.length > 0) {
+      handleJumpToParagraph(event.relatedParagraphs[0])
+    }
+  }, [handleJumpToParagraph])
+
+  // 处理人物点击：选中人物 + 切换到人物tab
+  const handlePersonClick = useCallback((person: Person) => {
+    setSelectedPerson(person)
+    setActiveTab('persons')
+    // 确保信息面板可见
+    if (!showInfoPanel) {
+      setShowInfoPanel(true)
+    }
+  }, [showInfoPanel])
+
+  // 判断段落是否与选中事件相关
+  const isParagraphRelatedToSelectedEvent = useCallback((paragraphId: string) => {
+    if (!selectedEvent) return false
+    return selectedEvent.relatedParagraphs?.includes(paragraphId) || false
+  }, [selectedEvent])
 
   // 渲染带有人物高亮的文本
   const renderTextWithHighlight = (text: string) => {
@@ -171,7 +247,7 @@ function ReadingPage() {
                   padding: '0 2px',
                   borderRadius: '2px',
                 }}
-                onClick={() => setSelectedPerson(person)}
+                onClick={() => handlePersonClick(person)}
               >
                 {matchedName}
               </Text>
@@ -409,36 +485,73 @@ function ReadingPage() {
                   </Alert>
                 ) : (
                   <Stack gap="lg">
-                    {chapter.paragraphs.map((paragraph) => (
-                      <Paper
-                        key={paragraph.id}
-                        p="md"
-                        withBorder
-                        ref={(el) => {
-                          if (el) paragraphRefs.current.set(paragraph.id, el)
-                        }}
-                        style={{
-                          backgroundColor: '#fafafa',
-                          transition: 'background-color 0.3s',
-                        }}
-                      >
-                        <Group align="flex-start" gap="md">
-                          <Text
-                            size="xs"
-                            c="dimmed"
-                            style={{
-                              minWidth: '60px',
-                              fontFamily: 'monospace',
-                            }}
-                          >
-                            [段落 {paragraph.order}]
-                          </Text>
-                          <div style={{ flex: 1 }}>
-                            {renderParagraphWithAnnotations(paragraph)}
-                          </div>
-                        </Group>
-                      </Paper>
-                    ))}
+                    {chapter.paragraphs.map((paragraph) => {
+                      const relatedEvents = paragraphEventsMap.get(paragraph.id) || []
+                      const isRelatedToSelected = isParagraphRelatedToSelectedEvent(paragraph.id)
+                      
+                      return (
+                        <Paper
+                          key={paragraph.id}
+                          p="md"
+                          withBorder
+                          ref={(el) => {
+                            if (el) paragraphRefs.current.set(paragraph.id, el)
+                          }}
+                          style={{
+                            backgroundColor: isRelatedToSelected ? '#e7f5ff' : '#fafafa',
+                            borderColor: isRelatedToSelected ? '#339af0' : undefined,
+                            borderWidth: isRelatedToSelected ? 2 : 1,
+                            transition: 'all 0.3s',
+                          }}
+                        >
+                          <Group align="flex-start" gap="md">
+                            <Stack gap={4} style={{ minWidth: '70px' }}>
+                              <Text
+                                size="xs"
+                                c="dimmed"
+                                style={{ fontFamily: 'monospace' }}
+                              >
+                                [段落 {paragraph.order}]
+                              </Text>
+                              {/* 显示相关事件标记 */}
+                              {relatedEvents.length > 0 && (
+                                <Tooltip
+                                  label={
+                                    <Stack gap={4}>
+                                      <Text size="xs" fw={500}>相关事件：</Text>
+                                      {relatedEvents.map(e => (
+                                        <Text key={e.id} size="xs">• {e.name}</Text>
+                                      ))}
+                                    </Stack>
+                                  }
+                                  multiline
+                                  w={200}
+                                >
+                                  <Badge
+                                    size="xs"
+                                    variant="light"
+                                    color="blue"
+                                    leftSection={<IconCalendarEvent size={10} />}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => {
+                                      setActiveTab('events')
+                                      if (relatedEvents[0]) {
+                                        setSelectedEvent(relatedEvents[0])
+                                      }
+                                    }}
+                                  >
+                                    {relatedEvents.length}
+                                  </Badge>
+                                </Tooltip>
+                              )}
+                            </Stack>
+                            <div style={{ flex: 1 }}>
+                              {renderParagraphWithAnnotations(paragraph)}
+                            </div>
+                          </Group>
+                        </Paper>
+                      )
+                    })}
                   </Stack>
                 )}
               </Stack>
@@ -461,11 +574,13 @@ function ReadingPage() {
               >
                 <InfoPanel
                   chapterId={chapterId!}
-                  onPersonClick={setSelectedPerson}
-                  onEventClick={setSelectedEvent}
+                  onPersonClick={handlePersonClick}
+                  onEventClick={handleEventClick}
                   onJumpToParagraph={handleJumpToParagraph}
                   selectedPersonId={selectedPerson?.id}
                   selectedEventId={selectedEvent?.id}
+                  activeTab={activeTab}
+                  onTabChange={setActiveTab}
                 />
               </Card>
             </Box>
