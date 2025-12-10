@@ -110,15 +110,11 @@ app.use('/api/admin/chapters', chaptersRouter)
 
 import personsRouter from './routes/persons'
 app.use('/api/admin/persons', personsRouter)
-
-import relationshipsRouter from './routes/relationships'
-app.use('/api/admin/relationships', relationshipsRouter)
-
-import placesRouter from './routes/places'
-app.use('/api/admin/places', placesRouter)
+app.use('/api/persons', personsRouter) // 公开 API（关系推断等）
 
 import eventsRouter from './routes/events'
 app.use('/api/admin/events', eventsRouter)
+app.use('/api/events', eventsRouter) // 公开 API（事件列表等）
 
 // Change log routes
 import changelogRouter from './routes/changelog'

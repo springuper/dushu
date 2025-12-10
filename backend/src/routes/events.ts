@@ -1,8 +1,27 @@
+/**
+ * 事件路由（事件中心 MVP 版本）
+ * Event 包含内嵌的 actors JSON 字段
+ */
 import express from 'express'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
+import { logChange } from '../lib/changeLog'
 
 const router = express.Router()
+
+// 事件类型映射
+function mapEventType(type: string | undefined | null): 'BATTLE' | 'POLITICAL' | 'PERSONAL' | 'OTHER' {
+  const normalized = (type || '').toUpperCase()
+  const map: Record<string, 'BATTLE' | 'POLITICAL' | 'PERSONAL' | 'OTHER'> = {
+    WAR: 'BATTLE',
+    BATTLE: 'BATTLE',
+    MILITARY: 'BATTLE',
+    POLITICS: 'POLITICAL',
+    POLITICAL: 'POLITICAL',
+    PERSONAL: 'PERSONAL',
+  }
+  return map[normalized] || 'OTHER'
+}
 
 // 获取事件列表
 router.get('/', requireAuth, async (req, res) => {
@@ -10,8 +29,8 @@ router.get('/', requireAuth, async (req, res) => {
     const {
       type,
       status,
-      locationId,
-      personId,
+      chapterId,
+      search,
       page = '1',
       pageSize = '20',
     } = req.query
@@ -19,14 +38,13 @@ router.get('/', requireAuth, async (req, res) => {
     const where: any = {}
     if (type) where.type = type
     if (status) where.status = status
-    if (locationId) where.locationId = locationId
+    if (chapterId) where.chapterId = chapterId
 
-    if (personId) {
-      where.participants = {
-        some: {
-          personId: personId as string,
-        },
-      }
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { summary: { contains: search as string, mode: 'insensitive' } },
+      ]
     }
 
     const skip = (Number(page) - 1) * Number(pageSize)
@@ -38,15 +56,11 @@ router.get('/', requireAuth, async (req, res) => {
         skip,
         take,
         include: {
-          location: {
+          chapter: {
             select: {
               id: true,
-              name: true,
-            },
-          },
-          participants: {
-            include: {
-              person: {
+              title: true,
+              book: {
                 select: {
                   id: true,
                   name: true,
@@ -81,10 +95,16 @@ router.get('/:id', requireAuth, async (req, res) => {
     const event = await prisma.event.findUnique({
       where: { id },
       include: {
-        location: true,
-        participants: {
-          include: {
-            person: true,
+        chapter: {
+          select: {
+            id: true,
+            title: true,
+            book: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
           },
         },
       },
@@ -106,29 +126,42 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     const data = req.body
 
-    if (!data.name || !data.timeRange?.start) {
-      return res.status(400).json({ error: 'Name and timeRange.start are required' })
+    if (!data.name || !data.timeRangeStart) {
+      return res.status(400).json({ error: 'Name and timeRangeStart are required' })
+    }
+    if (!data.summary || data.summary.trim() === '') {
+      return res.status(400).json({ error: 'Summary is required' })
+    }
+    if (!data.chapterId) {
+      return res.status(400).json({ error: 'ChapterId is required' })
     }
 
     const event = await prisma.event.create({
       data: {
         name: data.name,
-        timeRangeStart: data.timeRange.start,
-        timeRangeEnd: data.timeRange.end,
-        timeRangeLunar: data.timeRange.lunarCalendar,
-        locationId: data.locationId,
+        type: mapEventType(data.type),
+        timeRangeStart: data.timeRangeStart,
+        timeRangeEnd: data.timeRangeEnd || null,
+        timePrecision: data.timePrecision || 'YEAR',
+        locationName: data.locationName || null,
+        locationModernName: data.locationModernName || null,
+        summary: data.summary,
+        impact: data.impact || null,
+        actors: data.actors || [],
         chapterId: data.chapterId,
-        summary: data.summary || '',
-        type: data.type || 'OTHER',
-        impact: data.impact,
         relatedParagraphs: data.relatedParagraphs || [],
         status: data.status || 'DRAFT',
-        participants: {
-          create: (data.participants || []).map((personId: string) => ({
-            personId,
-          })),
-        },
       },
+    })
+
+    // 记录变更日志
+    await logChange({
+      entityType: 'EVENT',
+      entityId: event.id,
+      action: 'CREATE',
+      currentData: event,
+      changedBy: (req.session as any)?.adminId,
+      changeReason: '手动创建',
     })
 
     res.json(event)
@@ -144,31 +177,39 @@ router.put('/:id', requireAuth, async (req, res) => {
     const { id } = req.params
     const data = req.body
 
-    // 先删除旧的参与者关系
-    await prisma.eventParticipant.deleteMany({
-      where: { eventId: id },
-    })
+    const previousEvent = await prisma.event.findUnique({ where: { id } })
+    if (!previousEvent) {
+      return res.status(404).json({ error: 'Event not found' })
+    }
 
     const event = await prisma.event.update({
       where: { id },
       data: {
         name: data.name,
-        timeRangeStart: data.timeRange?.start,
-        timeRangeEnd: data.timeRange?.end,
-        timeRangeLunar: data.timeRange?.lunarCalendar,
-        locationId: data.locationId,
-        chapterId: data.chapterId,
+        type: data.type ? mapEventType(data.type) : undefined,
+        timeRangeStart: data.timeRangeStart,
+        timeRangeEnd: data.timeRangeEnd,
+        timePrecision: data.timePrecision,
+        locationName: data.locationName,
+        locationModernName: data.locationModernName,
         summary: data.summary,
-        type: data.type,
         impact: data.impact,
+        actors: data.actors,
+        chapterId: data.chapterId,
         relatedParagraphs: data.relatedParagraphs,
         status: data.status,
-        participants: {
-          create: (data.participants || []).map((personId: string) => ({
-            personId,
-          })),
-        },
       },
+    })
+
+    // 记录变更日志
+    await logChange({
+      entityType: 'EVENT',
+      entityId: event.id,
+      action: 'UPDATE',
+      previousData: previousEvent,
+      currentData: event,
+      changedBy: (req.session as any)?.adminId,
+      changeReason: '手动更新',
     })
 
     res.json(event)
@@ -183,8 +224,24 @@ router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params
 
+    const event = await prisma.event.findUnique({ where: { id } })
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' })
+    }
+
     await prisma.event.delete({
       where: { id },
+    })
+
+    // 记录变更日志
+    await logChange({
+      entityType: 'EVENT',
+      entityId: id,
+      action: 'DELETE',
+      previousData: event,
+      currentData: { deleted: true },
+      changedBy: (req.session as any)?.adminId,
+      changeReason: '手动删除',
     })
 
     res.json({ success: true })
@@ -194,5 +251,46 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 })
 
-export default router
+// 批量更新状态
+router.post('/batch/status', requireAuth, async (req, res) => {
+  try {
+    const { ids, status } = req.body
 
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Invalid ids' })
+    }
+
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' })
+    }
+
+    const result = await prisma.event.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    })
+
+    res.json({ success: true, count: result.count })
+  } catch (error) {
+    console.error('Batch update status error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// 按章节获取事件
+router.get('/by-chapter/:chapterId', requireAuth, async (req, res) => {
+  try {
+    const { chapterId } = req.params
+
+    const events = await prisma.event.findMany({
+      where: { chapterId },
+      orderBy: { timeRangeStart: 'asc' },
+    })
+
+    res.json(events)
+  } catch (error) {
+    console.error('Get events by chapter error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+export default router

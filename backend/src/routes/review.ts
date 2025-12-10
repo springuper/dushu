@@ -1,25 +1,29 @@
+/**
+ * 审核路由（事件中心 MVP 版本）
+ * 
+ * 简化审核流程，只处理 EVENT 和 PERSON 两种类型
+ */
 import express from 'express'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
-import { LLMMerger } from '../lib/llmMerger'
-import { logChange, calculateDiff } from '../lib/changeLog'
-import { PersonRole, Faction, EventType } from '@prisma/client'
+import { logChange } from '../lib/changeLog'
+import { PersonRole, Faction, EventType, TimePrecision } from '@prisma/client'
 
 const router = express.Router()
 
-// 映射 JSON 中的 role 值到 Prisma PersonRole 枚举
-function mapRole(role: string): PersonRole {
+// 角色映射
+function mapRole(role: string | undefined | null): PersonRole {
+  if (!role) return 'OTHER'
   const roleMap: Record<string, PersonRole> = {
     EMPEROR: 'MONARCH',
     EMPRESS: 'MONARCH',
+    KING: 'MONARCH',
     WARLORD: 'GENERAL',
     MINISTER: 'ADVISOR',
     GENERAL: 'GENERAL',
     SCHOLAR: 'CIVIL_OFFICIAL',
-    // 如果已经是正确的枚举值，直接返回
     MONARCH: 'MONARCH',
     ADVISOR: 'ADVISOR',
-    GENERAL: 'GENERAL',
     CIVIL_OFFICIAL: 'CIVIL_OFFICIAL',
     MILITARY_OFFICIAL: 'MILITARY_OFFICIAL',
     RELATIVE: 'RELATIVE',
@@ -29,33 +33,46 @@ function mapRole(role: string): PersonRole {
   return roleMap[role.toUpperCase()] || 'OTHER'
 }
 
-// 映射 JSON 中的 faction 值到 Prisma Faction 枚举
-function mapFaction(faction: string): Faction {
+// 阵营映射
+function mapFaction(faction: string | undefined | null): Faction {
+  if (!faction) return 'OTHER'
   const factionMap: Record<string, Faction> = {
     '汉': 'HAN',
     'HAN': 'HAN',
     '楚': 'CHU',
     'CHU': 'CHU',
-    '张楚': 'CHU', // 张楚可以归为楚
-    '赵': 'OTHER', // 暂时归为 OTHER，后续可以扩展枚举
-    '秦': 'OTHER', // 暂时归为 OTHER
     'NEUTRAL': 'NEUTRAL',
     'OTHER': 'OTHER',
   }
   return factionMap[faction] || 'OTHER'
 }
 
-// 映射事件类型到 Prisma EventType（前端/提取使用 WAR/POLITICS/...）
-function mapEventType(type: string): EventType {
+// 事件类型映射
+function mapEventType(type: string | undefined | null): EventType {
   const normalized = (type || '').toUpperCase()
   const map: Record<string, EventType> = {
     WAR: 'BATTLE',
     BATTLE: 'BATTLE',
+    MILITARY: 'BATTLE',
     POLITICS: 'POLITICAL',
     POLITICAL: 'POLITICAL',
     PERSONAL: 'PERSONAL',
   }
   return map[normalized] || 'OTHER'
+}
+
+// 时间精度映射
+function mapTimePrecision(precision: string | undefined | null): TimePrecision {
+  const normalized = (precision || '').toUpperCase()
+  const map: Record<string, TimePrecision> = {
+    EXACT_DATE: 'EXACT_DATE',
+    MONTH: 'MONTH',
+    SEASON: 'SEASON',
+    YEAR: 'YEAR',
+    DECADE: 'DECADE',
+    APPROXIMATE: 'APPROXIMATE',
+  }
+  return map[normalized] || 'YEAR'
 }
 
 // 获取 Review 列表
@@ -67,18 +84,6 @@ router.get('/items', requireAuth, async (req, res) => {
     if (type) where.type = type
     if (status) where.status = status
     if (source) where.source = source
-
-    // 搜索功能（在 originalData 中搜索）
-    // 注意：PostgreSQL JSON 搜索需要使用原生查询或 Prisma 的 JSON 操作符
-    // 这里简化处理，使用 contains 搜索
-    if (search) {
-      // 使用 Prisma 的 JSON 过滤（如果支持）
-      // 否则在应用层过滤
-      where.OR = [
-        // 尝试搜索 JSON 字段（需要根据实际数据结构调整）
-        { id: { contains: search as string } },
-      ]
-    }
 
     const skip = (Number(page) - 1) * Number(pageSize)
     const take = Number(pageSize)
@@ -119,35 +124,7 @@ router.get('/items/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Review item not found' })
     }
 
-    // 如果是人物类型且有重复检测，获取匹配的人物信息
-    let matchingPerson = null
-    if (item.type === 'PERSON') {
-      const personData = item.modifiedData || item.originalData
-      const duplicateCheck = (personData as any)?._duplicateCheck
-      if (duplicateCheck?.isDuplicate && duplicateCheck.matchingPersonId) {
-        matchingPerson = await prisma.person.findUnique({
-          where: { id: duplicateCheck.matchingPersonId },
-          select: {
-            id: true,
-            name: true,
-            aliases: true,
-            biography: true,
-            role: true,
-            faction: true,
-            birthYear: true,
-            deathYear: true,
-            activePeriodStart: true,
-            activePeriodEnd: true,
-            keyEvents: true,
-          },
-        })
-      }
-    }
-
-    res.json({
-      ...item,
-      matchingPerson,
-    })
+    res.json(item)
   } catch (error) {
     console.error('Get review item error:', error)
     res.status(500).json({ error: 'Internal server error' })
@@ -158,8 +135,8 @@ router.get('/items/:id', requireAuth, async (req, res) => {
 router.post('/items/:id/approve', requireAuth, async (req, res) => {
   try {
     const { id } = req.params
-    const { notes, mergeTargetId, useLLMMerge = true } = req.body
-    console.info('[review] approve start', { id, mergeTargetId, useLLMMerge })
+    const { notes } = req.body
+    
     const item = await prisma.reviewItem.findUnique({
       where: { id },
     })
@@ -168,107 +145,32 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Review item not found' })
     }
 
-    const newData = item.modifiedData || item.originalData
-    const adminId = req.session!.adminId
-
-    // 使用 LLM 融合服务
-    const merger = new LLMMerger()
+    const newData = (item.modifiedData || item.originalData) as any
+    const adminId = (req.session as any)?.adminId
 
     if (item.type === 'PERSON') {
-      const duplicateCheck = (newData as any)?._duplicateCheck
-      let targetPersonId = mergeTargetId || duplicateCheck?.matchingPersonId
-
-      // 如果检测到可能的重复，使用 LLM 判断是否应该合并
-      if (targetPersonId && useLLMMerge) {
-        const targetPerson = await prisma.person.findUnique({
-          where: { id: targetPersonId },
-        })
-
-        if (targetPerson) {
-          // 使用 LLM 判断和合并
-          const mergeResult = await merger.mergePerson(targetPerson, newData)
-
-          if (mergeResult.shouldMerge && mergeResult.confidence >= 0.7) {
-            // 合并数据，确保 role 和 faction 被正确映射
-            const mergedData = { ...mergeResult.mergedData }
-            if (mergedData.role) {
-              mergedData.role = mapRole(mergedData.role as string)
-            }
-            if (mergedData.faction) {
-              mergedData.faction = mapFaction(mergedData.faction as string)
-            }
-            
-            const previousData = JSON.parse(JSON.stringify(targetPerson))
-            
-            // 更新人物状态为 PUBLISHED（审核通过即发布）
-            const updatedPerson = await prisma.person.update({
-              where: { id: targetPersonId },
-              data: {
-                ...mergedData as any,
-                status: 'PUBLISHED',
-              },
-            })
-
-            // 记录变更日志
-            await logChange({
-              entityType: 'PERSON',
-              entityId: targetPersonId,
-              action: 'MERGE',
-              previousData,
-              currentData: updatedPerson,
-              changes: mergeResult.changes,
-              changedBy: adminId,
-              changeReason: notes || mergeResult.reason,
-              mergedFrom: [item.id], // 记录来源 ReviewItem ID
-            })
-
-            // 更新 ReviewItem
-            const updatedItem = await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: notes || `已通过 LLM 融合到: ${targetPerson.name} (置信度: ${(mergeResult.confidence * 100).toFixed(1)}%)`,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-
-            console.info('[review] approve merged person', {
-              reviewItemId: id,
-              targetPersonId,
-              confidence: mergeResult.confidence,
-            })
-            return res.json({
-              ...updatedItem,
-              merged: true,
-              mergeResult,
-              mergedPerson: updatedPerson,
-            })
-          }
-        }
+      // 验证必填字段
+      if (!newData.name || !newData.name.trim()) {
+        return res.status(400).json({ error: '人物姓名不能为空' })
       }
-
-      // 如果没有合并，创建新记录
-      // 映射 role 和 faction 到正确的枚举值
-      const mappedRole = mapRole(newData.role)
-      const mappedFaction = mapFaction(newData.faction)
+      
+      // 为 biography 提供默认值
+      const biography = (newData.biography && newData.biography.trim()) 
+        ? newData.biography.trim() 
+        : `（${newData.name}，暂无详细简介）`
       
       const newPerson = await prisma.person.create({
         data: {
-          name: newData.name,
+          name: newData.name.trim(),
           aliases: newData.aliases || [],
-          role: mappedRole,
-          faction: mappedFaction,
-          birthYear: newData.birthYear,
-          deathYear: newData.deathYear,
-          activePeriodStart: newData.activePeriod?.start,
-          activePeriodEnd: newData.activePeriod?.end,
-          biography: newData.biography,
-          keyEvents: newData.keyEvents || [],
-          portraitUrl: newData.portraitUrl,
-          firstAppearanceChapterId: newData.firstAppearance?.chapterId,
-          firstAppearanceParagraphId: newData.firstAppearance?.paragraphId,
-          status: 'PUBLISHED', // 审核通过即发布
+          role: mapRole(newData.role),
+          faction: mapFaction(newData.faction),
+          birthYear: newData.birthYear || null,
+          deathYear: newData.deathYear || null,
+          biography: biography,
+          portraitUrl: newData.portraitUrl || null,
+          sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+          status: 'PUBLISHED',
         },
       })
 
@@ -300,59 +202,46 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
     }
 
     if (item.type === 'EVENT') {
-      // 直接创建事件并发布（当前不做重复检测）
-      const eventType = mapEventType((newData as any)?.type)
-      const timeRange = (newData as any)?.timeRange || (newData as any)?.timeRangeStart
-      const timeRangeStart =
-        typeof timeRange === 'object' ? timeRange.start : (newData as any)?.timeRangeStart
-      const timeRangeEnd =
-        typeof timeRange === 'object' ? timeRange.end : (newData as any)?.timeRangeEnd
-      const timeRangeLunarRaw =
-        typeof timeRange === 'object'
-          ? timeRange.lunarCalendar ?? (timeRange as any)?.lunar ?? null
-          : (newData as any)?.timeRangeLunar ?? null
-      const timeRangeLunar =
-        typeof timeRangeLunarRaw === 'boolean'
-          ? String(timeRangeLunarRaw)
-          : timeRangeLunarRaw
-
-      let locationId = (newData as any)?.locationId || null
-      if (locationId) {
-        const exists = await prisma.place.findUnique({ where: { id: locationId } })
-        if (!exists) {
-          locationId = null
-        }
+      // 验证必填字段
+      if (!newData.name || !newData.name.trim()) {
+        return res.status(400).json({ error: '事件名称不能为空' })
+      }
+      if (!newData.chapterId) {
+        return res.status(400).json({ error: '事件必须关联章节' })
       }
 
-      // 过滤不存在的参与者，避免外键错误
-      const participantIds = Array.isArray((newData as any)?.participants)
-        ? (newData as any)?.participants
-        : []
-      const existingParticipants = await prisma.person.findMany({
-        where: { id: { in: participantIds } },
-        select: { id: true },
-      })
-      const validParticipantIds = existingParticipants.map((p) => p.id)
+      const eventName = newData.name.trim()
+      const eventTimeRangeStart = newData.timeRangeStart || '（时间不详）'
+      const eventSummary = (newData.summary && newData.summary.trim()) 
+        ? newData.summary.trim() 
+        : `（${eventName}，暂无详细摘要）`
 
       const createdEvent = await prisma.event.create({
         data: {
-          name: (newData as any)?.name,
-          timeRangeStart: timeRangeStart,
-          timeRangeEnd: timeRangeEnd,
-          timeRangeLunar: timeRangeLunar as any,
-          locationId,
-          chapterId: (newData as any)?.chapterId || null,
-          summary: (newData as any)?.summary || '',
-          type: eventType,
-          impact: (newData as any)?.impact,
-          relatedParagraphs: (newData as any)?.relatedParagraphs || [],
-          status: 'PUBLISHED', // 审核通过即发布
-          participants: {
-            create: validParticipantIds.map((personId: string) => ({
-              personId,
-            })),
-          },
+          name: eventName,
+          type: mapEventType(newData.type),
+          timeRangeStart: eventTimeRangeStart,
+          timeRangeEnd: newData.timeRangeEnd || null,
+          timePrecision: mapTimePrecision(newData.timePrecision),
+          locationName: newData.locationName || null,
+          locationModernName: newData.locationModernName || null,
+          summary: eventSummary,
+          impact: newData.impact || null,
+          actors: newData.actors || [],
+          chapterId: newData.chapterId,
+          relatedParagraphs: newData.relatedParagraphs || [],
+          status: 'PUBLISHED',
         },
+      })
+
+      // 记录变更日志
+      await logChange({
+        entityType: 'EVENT',
+        entityId: createdEvent.id,
+        action: 'CREATE',
+        currentData: createdEvent,
+        changedBy: adminId,
+        changeReason: notes || '从 ReviewItem 创建',
       })
 
       const updatedItem = await prisma.reviewItem.update({
@@ -371,7 +260,7 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
       })
     }
 
-    // 其他类型（地点等）暂时只更新状态
+    // 未知类型，只更新状态
     const updatedItem = await prisma.reviewItem.update({
       where: { id },
       data: {
@@ -400,7 +289,7 @@ router.post('/items/:id/reject', requireAuth, async (req, res) => {
       data: {
         status: 'REJECTED',
         reviewerNotes: notes,
-        reviewedBy: req.session!.adminId,
+        reviewedBy: (req.session as any)?.adminId,
         reviewedAt: new Date(),
       },
     })
@@ -424,7 +313,7 @@ router.post('/items/:id/update', requireAuth, async (req, res) => {
         status: 'MODIFIED',
         modifiedData,
         reviewerNotes: notes,
-        reviewedBy: req.session!.adminId,
+        reviewedBy: (req.session as any)?.adminId,
         reviewedAt: new Date(),
       },
     })
@@ -436,7 +325,7 @@ router.post('/items/:id/update', requireAuth, async (req, res) => {
   }
 })
 
-// 批量通过审核（直接发布）
+// 批量通过审核
 router.post('/batch-approve', requireAuth, async (req, res) => {
   try {
     const { ids, notes } = req.body
@@ -445,13 +334,11 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid ids' })
     }
 
-    const adminId = req.session!.adminId
-    const merger = new LLMMerger()
+    const adminId = (req.session as any)?.adminId
     let successCount = 0
     let errorCount = 0
     const errors: any[] = []
 
-    // 逐个处理，因为需要创建实体
     for (const id of ids) {
       try {
         const item = await prisma.reviewItem.findUnique({
@@ -463,86 +350,30 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
           continue
         }
 
-        const newData = item.modifiedData || item.originalData
+        const newData = (item.modifiedData || item.originalData) as any
 
         if (item.type === 'PERSON') {
-          const duplicateCheck = (newData as any)?._duplicateCheck
-          let targetPersonId = duplicateCheck?.matchingPersonId
-
-          // 如果检测到可能的重复，使用 LLM 判断是否应该合并
-          if (targetPersonId) {
-            const targetPerson = await prisma.person.findUnique({
-              where: { id: targetPersonId },
-            })
-
-            if (targetPerson) {
-              const mergeResult = await merger.mergePerson(targetPerson, newData)
-
-              if (mergeResult.shouldMerge && mergeResult.confidence >= 0.7) {
-                const mergedData = { ...mergeResult.mergedData }
-                if (mergedData.role) {
-                  mergedData.role = mapRole(mergedData.role as string)
-                }
-                if (mergedData.faction) {
-                  mergedData.faction = mapFaction(mergedData.faction as string)
-                }
-
-                const previousData = JSON.parse(JSON.stringify(targetPerson))
-                const updatedPerson = await prisma.person.update({
-                  where: { id: targetPersonId },
-                  data: {
-                    ...mergedData as any,
-                    status: 'PUBLISHED',
-                  },
-                })
-
-                await logChange({
-                  entityType: 'PERSON',
-                  entityId: targetPersonId,
-                  action: 'MERGE',
-                  previousData,
-                  currentData: updatedPerson,
-                  changes: mergeResult.changes,
-                  changedBy: adminId,
-                  changeReason: notes || mergeResult.reason,
-                  mergedFrom: [item.id],
-                })
-
-                await prisma.reviewItem.update({
-                  where: { id },
-                  data: {
-                    status: 'APPROVED',
-                    reviewerNotes: notes || `已通过 LLM 融合到: ${targetPerson.name}`,
-                    reviewedBy: adminId,
-                    reviewedAt: new Date(),
-                  },
-                })
-
-                successCount++
-                continue
-              }
-            }
+          if (!newData.name || !newData.name.trim()) {
+            errors.push({ id, error: '人物姓名不能为空' })
+            errorCount++
+            continue
           }
 
-          // 创建新记录
-          const mappedRole = mapRole(newData.role)
-          const mappedFaction = mapFaction(newData.faction)
+          const biography = (newData.biography && newData.biography.trim()) 
+            ? newData.biography.trim() 
+            : `（${newData.name}，暂无详细简介）`
 
           const newPerson = await prisma.person.create({
             data: {
-              name: newData.name,
+              name: newData.name.trim(),
               aliases: newData.aliases || [],
-              role: mappedRole,
-              faction: mappedFaction,
-              birthYear: newData.birthYear,
-              deathYear: newData.deathYear,
-              activePeriodStart: newData.activePeriod?.start,
-              activePeriodEnd: newData.activePeriod?.end,
-              biography: newData.biography,
-              keyEvents: newData.keyEvents || [],
-              portraitUrl: newData.portraitUrl,
-              firstAppearanceChapterId: newData.firstAppearance?.chapterId,
-              firstAppearanceParagraphId: newData.firstAppearance?.paragraphId,
+              role: mapRole(newData.role),
+              faction: mapFaction(newData.faction),
+              birthYear: newData.birthYear || null,
+              deathYear: newData.deathYear || null,
+              biography: biography,
+              portraitUrl: newData.portraitUrl || null,
+              sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
               status: 'PUBLISHED',
             },
           })
@@ -568,57 +399,48 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
 
           successCount++
         } else if (item.type === 'EVENT') {
-          const eventType = mapEventType((newData as any)?.type)
-          const timeRange = (newData as any)?.timeRange || (newData as any)?.timeRangeStart
-          const timeRangeStart =
-            typeof timeRange === 'object' ? timeRange.start : (newData as any)?.timeRangeStart
-          const timeRangeEnd =
-            typeof timeRange === 'object' ? timeRange.end : (newData as any)?.timeRangeEnd
-      const timeRangeLunarRaw =
-        typeof timeRange === 'object'
-          ? timeRange.lunarCalendar ?? (timeRange as any)?.lunar ?? null
-          : (newData as any)?.timeRangeLunar ?? null
-      const timeRangeLunar =
-        typeof timeRangeLunarRaw === 'boolean'
-          ? String(timeRangeLunarRaw)
-          : timeRangeLunarRaw
-
-          let locationId = (newData as any)?.locationId || null
-          if (locationId) {
-            const exists = await prisma.place.findUnique({ where: { id: locationId } })
-            if (!exists) {
-              locationId = null
-            }
+          if (!newData.name || !newData.name.trim()) {
+            errors.push({ id, error: '事件名称不能为空' })
+            errorCount++
+            continue
+          }
+          if (!newData.chapterId) {
+            errors.push({ id, error: '事件必须关联章节' })
+            errorCount++
+            continue
           }
 
-          const participantIds = Array.isArray((newData as any)?.participants)
-            ? (newData as any)?.participants
-            : []
-          const existingParticipants = await prisma.person.findMany({
-            where: { id: { in: participantIds } },
-            select: { id: true },
-          })
-          const validParticipantIds = existingParticipants.map((p) => p.id)
+          const eventName = newData.name.trim()
+          const eventTimeRangeStart = newData.timeRangeStart || '（时间不详）'
+          const eventSummary = (newData.summary && newData.summary.trim()) 
+            ? newData.summary.trim() 
+            : `（${eventName}，暂无详细摘要）`
 
-          await prisma.event.create({
+          const createdEvent = await prisma.event.create({
             data: {
-              name: (newData as any)?.name,
-              timeRangeStart: timeRangeStart,
-              timeRangeEnd: timeRangeEnd,
-              timeRangeLunar: timeRangeLunar as any,
-              locationId,
-              chapterId: (newData as any)?.chapterId || null,
-              summary: (newData as any)?.summary || '',
-              type: eventType,
-              impact: (newData as any)?.impact,
-              relatedParagraphs: (newData as any)?.relatedParagraphs || [],
+              name: eventName,
+              type: mapEventType(newData.type),
+              timeRangeStart: eventTimeRangeStart,
+              timeRangeEnd: newData.timeRangeEnd || null,
+              timePrecision: mapTimePrecision(newData.timePrecision),
+              locationName: newData.locationName || null,
+              locationModernName: newData.locationModernName || null,
+              summary: eventSummary,
+              impact: newData.impact || null,
+              actors: newData.actors || [],
+              chapterId: newData.chapterId,
+              relatedParagraphs: newData.relatedParagraphs || [],
               status: 'PUBLISHED',
-              participants: {
-                create: validParticipantIds.map((personId: string) => ({
-                  personId,
-                })),
-              },
             },
+          })
+
+          await logChange({
+            entityType: 'EVENT',
+            entityId: createdEvent.id,
+            action: 'CREATE',
+            currentData: createdEvent,
+            changedBy: adminId,
+            changeReason: notes || '从 ReviewItem 批量创建',
           })
 
           await prisma.reviewItem.update({
@@ -630,9 +452,10 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
               reviewedAt: new Date(),
             },
           })
+
           successCount++
         } else {
-          // 其他类型暂时只更新状态
+          // 未知类型，只更新状态
           await prisma.reviewItem.update({
             where: { id },
             data: {
@@ -679,7 +502,7 @@ router.post('/batch-reject', requireAuth, async (req, res) => {
       data: {
         status: 'REJECTED',
         reviewerNotes: notes,
-        reviewedBy: req.session!.adminId,
+        reviewedBy: (req.session as any)?.adminId,
         reviewedAt: new Date(),
       },
     })
@@ -691,123 +514,56 @@ router.post('/batch-reject', requireAuth, async (req, res) => {
   }
 })
 
-// 批量操作（保留向后兼容，内部调用批量通过/拒绝接口）
+// 批量操作（兼容旧接口）
 router.post('/items/batch', requireAuth, async (req, res) => {
   try {
-    const { ids, action, notes } = req.body // action: 'approve' | 'reject' | 'delete'
+    const { ids, action, notes } = req.body
 
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Invalid ids' })
     }
 
     if (action === 'approve') {
-      // 调用批量通过逻辑（复用代码）
-      const adminId = req.session!.adminId
-      const merger = new LLMMerger()
+      // 直接调用批量通过逻辑
+      const adminId = (req.session as any)?.adminId
       let successCount = 0
       let errorCount = 0
       const errors: any[] = []
 
       for (const id of ids) {
         try {
-          const item = await prisma.reviewItem.findUnique({
-            where: { id },
-          })
-
+          const item = await prisma.reviewItem.findUnique({ where: { id } })
           if (!item || item.status !== 'PENDING') {
             errorCount++
             continue
           }
 
-          const newData = item.modifiedData || item.originalData
+          const newData = (item.modifiedData || item.originalData) as any
 
           if (item.type === 'PERSON') {
-            const duplicateCheck = (newData as any)?._duplicateCheck
-            let targetPersonId = duplicateCheck?.matchingPersonId
-
-            if (targetPersonId) {
-              const targetPerson = await prisma.person.findUnique({
-                where: { id: targetPersonId },
-              })
-
-              if (targetPerson) {
-                const mergeResult = await merger.mergePerson(targetPerson, newData)
-
-                if (mergeResult.shouldMerge && mergeResult.confidence >= 0.7) {
-                  const mergedData = { ...mergeResult.mergedData }
-                  if (mergedData.role) {
-                    mergedData.role = mapRole(mergedData.role as string)
-                  }
-                  if (mergedData.faction) {
-                    mergedData.faction = mapFaction(mergedData.faction as string)
-                  }
-
-                  const previousData = JSON.parse(JSON.stringify(targetPerson))
-                  const updatedPerson = await prisma.person.update({
-                    where: { id: targetPersonId },
-                    data: {
-                      ...mergedData as any,
-                      status: 'PUBLISHED',
-                    },
-                  })
-
-                  await logChange({
-                    entityType: 'PERSON',
-                    entityId: targetPersonId,
-                    action: 'MERGE',
-                    previousData,
-                    currentData: updatedPerson,
-                    changes: mergeResult.changes,
-                    changedBy: adminId,
-                    changeReason: notes || mergeResult.reason,
-                    mergedFrom: [item.id],
-                  })
-
-                  await prisma.reviewItem.update({
-                    where: { id },
-                    data: {
-                      status: 'APPROVED',
-                      reviewerNotes: notes || `已通过 LLM 融合到: ${targetPerson.name}`,
-                      reviewedBy: adminId,
-                      reviewedAt: new Date(),
-                    },
-                  })
-
-                  successCount++
-                  continue
-                }
-              }
+            if (!newData.name || !newData.name.trim()) {
+              errors.push({ id, error: '人物姓名不能为空' })
+              errorCount++
+              continue
             }
 
-            const mappedRole = mapRole(newData.role)
-            const mappedFaction = mapFaction(newData.faction)
+            const biography = (newData.biography && newData.biography.trim()) 
+              ? newData.biography.trim() 
+              : `（${newData.name}，暂无详细简介）`
 
-            const newPerson = await prisma.person.create({
+            await prisma.person.create({
               data: {
-                name: newData.name,
+                name: newData.name.trim(),
                 aliases: newData.aliases || [],
-                role: mappedRole,
-                faction: mappedFaction,
-                birthYear: newData.birthYear,
-                deathYear: newData.deathYear,
-                activePeriodStart: newData.activePeriod?.start,
-                activePeriodEnd: newData.activePeriod?.end,
-                biography: newData.biography,
-                keyEvents: newData.keyEvents || [],
-                portraitUrl: newData.portraitUrl,
-                firstAppearanceChapterId: newData.firstAppearance?.chapterId,
-                firstAppearanceParagraphId: newData.firstAppearance?.paragraphId,
+                role: mapRole(newData.role),
+                faction: mapFaction(newData.faction),
+                birthYear: newData.birthYear || null,
+                deathYear: newData.deathYear || null,
+                biography: biography,
+                portraitUrl: newData.portraitUrl || null,
+                sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
                 status: 'PUBLISHED',
               },
-            })
-
-            await logChange({
-              entityType: 'PERSON',
-              entityId: newPerson.id,
-              action: 'CREATE',
-              currentData: newPerson,
-              changedBy: adminId,
-              changeReason: notes || '从 ReviewItem 批量创建',
             })
 
             await prisma.reviewItem.update({
@@ -819,59 +575,36 @@ router.post('/items/batch', requireAuth, async (req, res) => {
                 reviewedAt: new Date(),
               },
             })
-
             successCount++
           } else if (item.type === 'EVENT') {
-            const eventType = mapEventType((newData as any)?.type)
-            const timeRange = (newData as any)?.timeRange || (newData as any)?.timeRangeStart
-            const timeRangeStart =
-              typeof timeRange === 'object' ? timeRange.start : (newData as any)?.timeRangeStart
-            const timeRangeEnd =
-              typeof timeRange === 'object' ? timeRange.end : (newData as any)?.timeRangeEnd
-            const timeRangeLunarRaw =
-              typeof timeRange === 'object'
-                ? timeRange.lunarCalendar ?? (timeRange as any)?.lunar ?? null
-                : (newData as any)?.timeRangeLunar ?? null
-            const timeRangeLunar =
-              typeof timeRangeLunarRaw === 'boolean'
-                ? String(timeRangeLunarRaw)
-                : timeRangeLunarRaw
-
-            let locationId = (newData as any)?.locationId || null
-            if (locationId) {
-              const exists = await prisma.place.findUnique({ where: { id: locationId } })
-              if (!exists) {
-                locationId = null
-              }
+            if (!newData.name || !newData.name.trim()) {
+              errors.push({ id, error: '事件名称不能为空' })
+              errorCount++
+              continue
             }
-
-            const participantIds = Array.isArray((newData as any)?.participants)
-              ? (newData as any)?.participants
-              : []
-            const existingParticipants = await prisma.person.findMany({
-              where: { id: { in: participantIds } },
-              select: { id: true },
-            })
-            const validParticipantIds = existingParticipants.map((p) => p.id)
+            if (!newData.chapterId) {
+              errors.push({ id, error: '事件必须关联章节' })
+              errorCount++
+              continue
+            }
 
             await prisma.event.create({
               data: {
-                name: (newData as any)?.name,
-                timeRangeStart: timeRangeStart,
-                timeRangeEnd: timeRangeEnd,
-                timeRangeLunar: timeRangeLunar as any,
-                locationId,
-                chapterId: (newData as any)?.chapterId || null,
-                summary: (newData as any)?.summary || '',
-                type: eventType,
-                impact: (newData as any)?.impact,
-                relatedParagraphs: (newData as any)?.relatedParagraphs || [],
+                name: newData.name.trim(),
+                type: mapEventType(newData.type),
+                timeRangeStart: newData.timeRangeStart || '（时间不详）',
+                timeRangeEnd: newData.timeRangeEnd || null,
+                timePrecision: mapTimePrecision(newData.timePrecision),
+                locationName: newData.locationName || null,
+                locationModernName: newData.locationModernName || null,
+                summary: (newData.summary && newData.summary.trim()) 
+                  ? newData.summary.trim() 
+                  : `（${newData.name}，暂无详细摘要）`,
+                impact: newData.impact || null,
+                actors: newData.actors || [],
+                chapterId: newData.chapterId,
+                relatedParagraphs: newData.relatedParagraphs || [],
                 status: 'PUBLISHED',
-                participants: {
-                  create: validParticipantIds.map((personId: string) => ({
-                    personId,
-                  })),
-                },
               },
             })
 
@@ -915,7 +648,7 @@ router.post('/items/batch', requireAuth, async (req, res) => {
         data: {
           status: 'REJECTED',
           reviewerNotes: notes,
-          reviewedBy: req.session!.adminId,
+          reviewedBy: (req.session as any)?.adminId,
           reviewedAt: new Date(),
         },
       })
@@ -935,4 +668,3 @@ router.post('/items/batch', requireAuth, async (req, res) => {
 })
 
 export default router
-

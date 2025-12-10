@@ -1,3 +1,8 @@
+/**
+ * 审核页面（事件中心 MVP 版本）
+ * 
+ * 只处理 EVENT 和 PERSON 两种类型
+ */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -7,26 +12,24 @@ import {
   Badge,
   Button,
   Group,
-  TextInput,
   Select,
   Checkbox,
-  ActionIcon,
   Modal,
   Textarea,
   Stack,
   Text,
   Paper,
   Divider,
+  Code,
+  Tabs,
 } from '@mantine/core'
 import { api } from '../../lib/api'
-import { IconEdit, IconCheck, IconX, IconTrash } from '@tabler/icons-react'
+import { IconCheck, IconX, IconEye } from '@tabler/icons-react'
 
 const REVIEW_TYPES = [
   { value: '', label: '全部类型' },
-  { value: 'PERSON', label: '人物' },
-  { value: 'RELATIONSHIP', label: '关系' },
-  { value: 'PLACE', label: '地点' },
   { value: 'EVENT', label: '事件' },
+  { value: 'PERSON', label: '人物' },
 ]
 
 const REVIEW_STATUSES = [
@@ -37,10 +40,29 @@ const REVIEW_STATUSES = [
   { value: 'MODIFIED', label: '已修改' },
 ]
 
+const statusColors: Record<string, string> = {
+  PENDING: 'yellow',
+  APPROVED: 'green',
+  REJECTED: 'red',
+  MODIFIED: 'blue',
+}
+
+const statusLabels: Record<string, string> = {
+  PENDING: '待审核',
+  APPROVED: '已通过',
+  REJECTED: '已拒绝',
+  MODIFIED: '已修改',
+}
+
+const typeLabels: Record<string, string> = {
+  EVENT: '事件',
+  PERSON: '人物',
+}
+
 function ReviewPage() {
   const [type, setType] = useState('')
   const [status, setStatus] = useState('PENDING')
-  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [detailModal, setDetailModal] = useState<string | null>(null)
   const [actionModal, setActionModal] = useState<{
@@ -48,263 +70,350 @@ function ReviewPage() {
     action: 'approve' | 'reject' | null
     ids: string[]
   }>({ open: false, action: null, ids: [] })
+  const [notes, setNotes] = useState('')
 
   const queryClient = useQueryClient()
 
-  // 获取 Review 列表
   const { data, isLoading } = useQuery({
-    queryKey: ['review', 'items', { type, status, search }],
+    queryKey: ['review-items', { type, status, page }],
     queryFn: async () => {
       const params = new URLSearchParams()
+      params.append('page', page.toString())
+      params.append('pageSize', '20')
       if (type) params.append('type', type)
       if (status) params.append('status', status)
-      if (search) params.append('search', search)
-
-      const response = await api.get(`/api/admin/review/items?${params.toString()}`)
-      return response.data
+      const res = await api.get(`/api/admin/review/items?${params.toString()}`)
+      return res.data
     },
   })
 
-  // 批量通过
+  const approveMutation = useMutation({
+    mutationFn: async ({ id, notes }: { id: string; notes?: string }) => {
+      return api.post(`/api/admin/review/items/${id}/approve`, { notes })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review-items'] })
+      setDetailModal(null)
+      setActionModal({ open: false, action: null, ids: [] })
+    },
+  })
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ id, notes }: { id: string; notes?: string }) => {
+      return api.post(`/api/admin/review/items/${id}/reject`, { notes })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review-items'] })
+      setDetailModal(null)
+      setActionModal({ open: false, action: null, ids: [] })
+    },
+  })
+
   const batchApproveMutation = useMutation({
     mutationFn: async ({ ids, notes }: { ids: string[]; notes?: string }) => {
-      const response = await api.post('/api/admin/review/batch-approve', { ids, notes })
-      return response.data
+      return api.post('/api/admin/review/batch-approve', { ids, notes })
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['review'] })
-      setActionModal({ open: false, action: null, ids: [] })
+      queryClient.invalidateQueries({ queryKey: ['review-items'] })
       setSelectedIds([])
+      setActionModal({ open: false, action: null, ids: [] })
     },
   })
 
-  // 批量拒绝
   const batchRejectMutation = useMutation({
     mutationFn: async ({ ids, notes }: { ids: string[]; notes?: string }) => {
-      const response = await api.post('/api/admin/review/batch-reject', { ids, notes })
-      return response.data
+      return api.post('/api/admin/review/batch-reject', { ids, notes })
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['review'] })
-      setActionModal({ open: false, action: null, ids: [] })
+      queryClient.invalidateQueries({ queryKey: ['review-items'] })
       setSelectedIds([])
+      setActionModal({ open: false, action: null, ids: [] })
     },
   })
 
-  const handleBatchAction = (action: 'approve' | 'reject') => {
-    if (selectedIds.length === 0) return
-    setActionModal({ open: true, action, ids: selectedIds })
-  }
+  const items = data?.items || []
 
-  const handleConfirmAction = (notes?: string) => {
-    if (actionModal.action === 'approve' && actionModal.ids.length > 0) {
-      batchApproveMutation.mutate({ ids: actionModal.ids, notes })
-    } else if (actionModal.action === 'reject' && actionModal.ids.length > 0) {
-      batchRejectMutation.mutate({ ids: actionModal.ids, notes })
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(items.map((item: any) => item.id))
+    } else {
+      setSelectedIds([])
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      PENDING: 'yellow',
-      APPROVED: 'green',
-      REJECTED: 'red',
-      MODIFIED: 'blue',
+  const handleSelectOne = (id: string, checked: boolean) => {
+    if (checked) {
+      setSelectedIds([...selectedIds, id])
+    } else {
+      setSelectedIds(selectedIds.filter((i) => i !== id))
     }
-    const labels: Record<string, string> = {
-      PENDING: '待审核',
-      APPROVED: '已通过',
-      REJECTED: '已拒绝',
-      MODIFIED: '已修改',
-    }
-    return <Badge color={colors[status] || 'gray'}>{labels[status] || status}</Badge>
   }
 
-  const getTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      PERSON: '人物',
-      RELATIONSHIP: '关系',
-      PLACE: '地点',
-      EVENT: '事件',
+  const openActionModal = (action: 'approve' | 'reject', ids: string[]) => {
+    setNotes('')
+    setActionModal({ open: true, action, ids })
+  }
+
+  const handleAction = () => {
+    const { action, ids } = actionModal
+    if (!action || ids.length === 0) return
+
+    if (ids.length === 1) {
+      if (action === 'approve') {
+        approveMutation.mutate({ id: ids[0], notes })
+      } else {
+        rejectMutation.mutate({ id: ids[0], notes })
+      }
+    } else {
+      if (action === 'approve') {
+        batchApproveMutation.mutate({ ids, notes })
+      } else {
+        batchRejectMutation.mutate({ ids, notes })
+      }
     }
-    return labels[type] || type
+  }
+
+  const renderDataPreview = (item: any) => {
+    const data = item.modifiedData || item.originalData
+    if (item.type === 'EVENT') {
+      return (
+        <Stack gap="xs">
+          <Text size="sm" fw={500}>{data.name}</Text>
+          <Text size="xs" c="dimmed">
+            时间: {data.timeRangeStart} | 类型: {data.type}
+          </Text>
+          <Text size="xs" lineClamp={2}>{data.summary}</Text>
+          {data.actors?.length > 0 && (
+            <Text size="xs" c="dimmed">
+              参与者: {data.actors.map((a: any) => a.name).join(', ')}
+            </Text>
+          )}
+        </Stack>
+      )
+    }
+    if (item.type === 'PERSON') {
+      return (
+        <Stack gap="xs">
+          <Text size="sm" fw={500}>{data.name}</Text>
+          <Text size="xs" c="dimmed">
+            {data.aliases?.length > 0 && `别名: ${data.aliases.join(', ')} | `}
+            角色: {data.role} | 阵营: {data.faction}
+          </Text>
+          <Text size="xs" lineClamp={2}>{data.biography}</Text>
+        </Stack>
+      )
+    }
+    return <Text size="xs">{JSON.stringify(data).slice(0, 100)}...</Text>
   }
 
   return (
     <Container size="xl" py="xl">
-      <Group justify="space-between" mb="xl">
-        <Title order={2}>Review 工具</Title>
-        <Group>
-          <Button
-            color="green"
-            onClick={() => handleBatchAction('approve')}
-            disabled={selectedIds.length === 0}
-            loading={batchApproveMutation.isPending}
-          >
-            批量通过 ({selectedIds.length})
-          </Button>
-          <Button
-            color="red"
-            onClick={() => handleBatchAction('reject')}
-            disabled={selectedIds.length === 0}
-            loading={batchRejectMutation.isPending}
-          >
-            批量拒绝 ({selectedIds.length})
-          </Button>
-        </Group>
-      </Group>
+      <Title order={2} mb="xl">审核管理</Title>
 
       {/* 筛选器 */}
-      <Paper p="md" mb="md" withBorder>
-        <Group>
-          <Select
-            label="类型"
-            data={REVIEW_TYPES}
-            value={type}
-            onChange={(value) => setType(value || '')}
-            style={{ flex: 1 }}
-          />
-          <Select
-            label="状态"
-            data={REVIEW_STATUSES}
-            value={status}
-            onChange={(value) => setStatus(value || '')}
-            style={{ flex: 1 }}
-          />
-          <TextInput
-            label="搜索"
-            placeholder="搜索名称或 ID"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ flex: 2 }}
-          />
-        </Group>
-      </Paper>
+      <Group mb="md">
+        <Select
+          placeholder="类型"
+          data={REVIEW_TYPES}
+          value={type}
+          onChange={(v) => setType(v || '')}
+          clearable
+        />
+        <Select
+          placeholder="状态"
+          data={REVIEW_STATUSES}
+          value={status}
+          onChange={(v) => setStatus(v || '')}
+          clearable
+        />
+      </Group>
 
-      {/* 列表 */}
-      <Table striped highlightOnHover>
+      {/* 批量操作栏 */}
+      {selectedIds.length > 0 && (
+        <Group mb="md" p="md" style={{ backgroundColor: 'var(--mantine-color-blue-0)', borderRadius: 'var(--mantine-radius-md)' }}>
+          <Text size="sm" fw={500}>
+            已选择 {selectedIds.length} 项
+          </Text>
+          <Button
+            size="xs"
+            color="green"
+            variant="light"
+            leftSection={<IconCheck size={14} />}
+            onClick={() => openActionModal('approve', selectedIds)}
+          >
+            批量通过
+          </Button>
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            leftSection={<IconX size={14} />}
+            onClick={() => openActionModal('reject', selectedIds)}
+          >
+            批量拒绝
+          </Button>
+          <Button
+            size="xs"
+            variant="subtle"
+            onClick={() => setSelectedIds([])}
+          >
+            取消选择
+          </Button>
+        </Group>
+      )}
+
+      <Table striped withTableBorder highlightOnHover>
         <Table.Thead>
           <Table.Tr>
             <Table.Th style={{ width: 40 }}>
               <Checkbox
-                checked={selectedIds.length === data?.items.length && data?.items.length > 0}
-                indeterminate={selectedIds.length > 0 && selectedIds.length < (data?.items.length || 0)}
-                onChange={(e) => {
-                  if (e.currentTarget.checked) {
-                    setSelectedIds(data?.items.map((item: any) => item.id) || [])
-                  } else {
-                    setSelectedIds([])
-                  }
-                }}
+                checked={items.length > 0 && selectedIds.length === items.length}
+                indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
+                onChange={(e) => handleSelectAll(e.currentTarget.checked)}
               />
             </Table.Th>
             <Table.Th>类型</Table.Th>
-            <Table.Th>名称/ID</Table.Th>
+            <Table.Th style={{ minWidth: 300 }}>内容预览</Table.Th>
             <Table.Th>状态</Table.Th>
-            <Table.Th>来源</Table.Th>
             <Table.Th>创建时间</Table.Th>
-            <Table.Th>操作</Table.Th>
+            <Table.Th style={{ width: 180 }}>操作</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {isLoading ? (
+          {items.length === 0 ? (
             <Table.Tr>
-              <Table.Td colSpan={7} ta="center">
-                加载中...
-              </Table.Td>
-            </Table.Tr>
-          ) : data?.items.length === 0 ? (
-            <Table.Tr>
-              <Table.Td colSpan={7} ta="center">
-                暂无数据
+              <Table.Td colSpan={6}>
+                <Text c="dimmed" ta="center">
+                  {isLoading ? '加载中...' : '暂无数据'}
+                </Text>
               </Table.Td>
             </Table.Tr>
           ) : (
-            data?.items.map((item: any) => {
-              const originalData = item.originalData || {}
-              const name = originalData.name || originalData.id || item.id
-
-              return (
-                <Table.Tr key={item.id}>
-                  <Table.Td>
-                    <Checkbox
-                      checked={selectedIds.includes(item.id)}
-                      onChange={(e) => {
-                        if (e.currentTarget.checked) {
-                          setSelectedIds([...selectedIds, item.id])
-                        } else {
-                          setSelectedIds(selectedIds.filter((id) => id !== item.id))
-                        }
-                      }}
-                    />
-                  </Table.Td>
-                  <Table.Td>{getTypeLabel(item.type)}</Table.Td>
-                  <Table.Td>{name}</Table.Td>
-                  <Table.Td>{getStatusBadge(item.status)}</Table.Td>
-                  <Table.Td>
-                    {item.source === 'LLM_EXTRACT' ? 'LLM 提取' : '手动录入'}
-                  </Table.Td>
-                  <Table.Td>
-                    {new Date(item.createdAt).toLocaleString('zh-CN')}
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap="xs">
-                      <ActionIcon
-                        variant="subtle"
-                        onClick={() => setDetailModal(item.id)}
-                      >
-                        <IconEdit size={16} />
-                      </ActionIcon>
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              )
-            })
+            items.map((item: any) => (
+              <Table.Tr key={item.id}>
+                <Table.Td>
+                  <Checkbox
+                    checked={selectedIds.includes(item.id)}
+                    onChange={(e) => handleSelectOne(item.id, e.currentTarget.checked)}
+                  />
+                </Table.Td>
+                <Table.Td>
+                  <Badge size="sm" color={item.type === 'EVENT' ? 'blue' : 'purple'}>
+                    {typeLabels[item.type] || item.type}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>{renderDataPreview(item)}</Table.Td>
+                <Table.Td>
+                  <Badge size="sm" color={statusColors[item.status] || 'gray'}>
+                    {statusLabels[item.status] || item.status}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="xs">{new Date(item.createdAt).toLocaleString('zh-CN')}</Text>
+                </Table.Td>
+                <Table.Td>
+                  <Group gap="xs">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      leftSection={<IconEye size={14} />}
+                      onClick={() => setDetailModal(item.id)}
+                    >
+                      详情
+                    </Button>
+                    {item.status === 'PENDING' && (
+                      <>
+                        <Button
+                          size="xs"
+                          color="green"
+                          variant="light"
+                          onClick={() => openActionModal('approve', [item.id])}
+                        >
+                          通过
+                        </Button>
+                        <Button
+                          size="xs"
+                          color="red"
+                          variant="light"
+                          onClick={() => openActionModal('reject', [item.id])}
+                        >
+                          拒绝
+                        </Button>
+                      </>
+                    )}
+                  </Group>
+                </Table.Td>
+              </Table.Tr>
+            ))
           )}
         </Table.Tbody>
       </Table>
 
-      {/* 详情 Modal */}
+      {/* 分页 */}
+      <Group justify="flex-end" mt="md">
+        <Button
+          variant="light"
+          size="sm"
+          onClick={() => setPage(Math.max(1, page - 1))}
+          disabled={page <= 1}
+        >
+          上一页
+        </Button>
+        <Text size="sm">
+          第 {page} 页 / 共 {data?.totalPages || 1} 页
+        </Text>
+        <Button
+          variant="light"
+          size="sm"
+          onClick={() => setPage(Math.min((data?.totalPages || 1), page + 1))}
+          disabled={page >= (data?.totalPages || 1)}
+        >
+          下一页
+        </Button>
+      </Group>
+
+      {/* 详情弹窗 */}
       <ReviewDetailModal
         itemId={detailModal}
         onClose={() => setDetailModal(null)}
+        onApprove={(id) => openActionModal('approve', [id])}
+        onReject={(id) => openActionModal('reject', [id])}
       />
 
-      {/* 批量操作 Modal */}
+      {/* 操作确认弹窗 */}
       <Modal
         opened={actionModal.open}
         onClose={() => setActionModal({ open: false, action: null, ids: [] })}
-        title={actionModal.action === 'approve' ? '批量通过' : '批量拒绝'}
+        title={actionModal.action === 'approve' ? '确认通过' : '确认拒绝'}
       >
-        <Stack>
-          <Text>
-            确定要{actionModal.action === 'approve' ? '通过' : '拒绝'} {actionModal.ids.length} 个项目吗？
-            {actionModal.action === 'approve' && (
-              <Text size="sm" c="dimmed" mt="xs" component="div">
-                通过后将直接发布（状态设为 PUBLISHED）
-              </Text>
-            )}
+        <Stack gap="md">
+          <Text size="sm">
+            {actionModal.action === 'approve'
+              ? `确定要通过选中的 ${actionModal.ids.length} 项审核吗？`
+              : `确定要拒绝选中的 ${actionModal.ids.length} 项审核吗？`}
           </Text>
           <Textarea
             label="备注（可选）"
-            placeholder="输入审核备注"
-            id="batch-notes"
+            placeholder="添加审核备注..."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            minRows={2}
           />
           <Group justify="flex-end">
             <Button
-              variant="subtle"
+              variant="light"
               onClick={() => setActionModal({ open: false, action: null, ids: [] })}
             >
               取消
             </Button>
             <Button
               color={actionModal.action === 'approve' ? 'green' : 'red'}
-              onClick={() => {
-                const notes = (document.getElementById('batch-notes') as HTMLTextAreaElement)?.value
-                handleConfirmAction(notes)
-              }}
+              onClick={handleAction}
               loading={
-                batchApproveMutation.isPending || batchRejectMutation.isPending
+                approveMutation.isPending ||
+                rejectMutation.isPending ||
+                batchApproveMutation.isPending ||
+                batchRejectMutation.isPending
               }
             >
               确认
@@ -316,144 +425,147 @@ function ReviewPage() {
   )
 }
 
-// Review 详情 Modal 组件
-function ReviewDetailModal({ itemId, onClose }: { itemId: string | null; onClose: () => void }) {
-  const [notes, setNotes] = useState('')
-  const [modifiedData, setModifiedData] = useState<any>(null)
-
+// 审核详情弹窗
+function ReviewDetailModal({
+  itemId,
+  onClose,
+  onApprove,
+  onReject,
+}: {
+  itemId: string | null
+  onClose: () => void
+  onApprove: (id: string) => void
+  onReject: (id: string) => void
+}) {
   const { data: item, isLoading } = useQuery({
-    queryKey: ['review', 'item', itemId],
+    queryKey: ['review-item', itemId],
     queryFn: async () => {
-      const response = await api.get(`/api/admin/review/items/${itemId}`)
-      return response.data
+      const res = await api.get(`/api/admin/review/items/${itemId}`)
+      return res.data
     },
     enabled: !!itemId,
   })
 
-  const queryClient = useQueryClient()
-
-  const approveMutation = useMutation({
-    mutationFn: async () => {
-      const response = await api.post(`/api/admin/review/items/${itemId}/approve`, { notes })
-      return response.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['review'] })
-      onClose()
-    },
-  })
-
-  const rejectMutation = useMutation({
-    mutationFn: async () => {
-      const response = await api.post(`/api/admin/review/items/${itemId}/reject`, { notes })
-      return response.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['review'] })
-      onClose()
-    },
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: async () => {
-      const response = await api.post(`/api/admin/review/items/${itemId}/update`, {
-        modifiedData: modifiedData || item?.originalData,
-        notes,
-      })
-      return response.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['review'] })
-      onClose()
-    },
-  })
-
-  if (!itemId) return null
-
-  const originalData = item?.originalData || {}
-  const currentData = modifiedData || item?.modifiedData || originalData
+  const data = item?.modifiedData || item?.originalData
 
   return (
     <Modal
       opened={!!itemId}
       onClose={onClose}
-      title="Review 详情"
-      size="xl"
+      title="审核详情"
+      size="lg"
     >
       {isLoading ? (
         <Text>加载中...</Text>
-      ) : (
-        <Stack>
-          <div>
-            <Text fw={500} mb="xs">类型：{item?.type}</Text>
-            <Text fw={500} mb="xs">状态：{item?.status}</Text>
-          </div>
+      ) : item ? (
+        <Tabs defaultValue="preview">
+          <Tabs.List>
+            <Tabs.Tab value="preview">预览</Tabs.Tab>
+            <Tabs.Tab value="raw">原始数据</Tabs.Tab>
+          </Tabs.List>
 
-          <Divider />
+          <Tabs.Panel value="preview" pt="md">
+            <Stack gap="md">
+              <Group>
+                <Badge color={item.type === 'EVENT' ? 'blue' : 'purple'}>
+                  {typeLabels[item.type] || item.type}
+                </Badge>
+                <Badge color={statusColors[item.status] || 'gray'}>
+                  {statusLabels[item.status] || item.status}
+                </Badge>
+              </Group>
 
-          <div>
-            <Text fw={500} mb="xs">原始数据：</Text>
-            <Paper p="sm" withBorder style={{ maxHeight: 200, overflow: 'auto' }}>
-              <pre style={{ fontSize: 12, margin: 0 }}>
-                {JSON.stringify(originalData, null, 2)}
-              </pre>
-            </Paper>
-          </div>
+              {item.type === 'EVENT' && data && (
+                <>
+                  <Paper p="md" withBorder>
+                    <Text size="lg" fw={500} mb="xs">{data.name}</Text>
+                    <Group gap="xs" mb="sm">
+                      <Badge size="sm">{data.type}</Badge>
+                      <Text size="sm" c="dimmed">{data.timeRangeStart}</Text>
+                      {data.locationName && (
+                        <Text size="sm" c="dimmed">| {data.locationName}</Text>
+                      )}
+                    </Group>
+                    <Divider label="摘要" labelPosition="left" mb="sm" />
+                    <Text size="sm">{data.summary}</Text>
+                    {data.impact && (
+                      <>
+                        <Divider label="影响" labelPosition="left" my="sm" />
+                        <Text size="sm">{data.impact}</Text>
+                      </>
+                    )}
+                    {data.actors?.length > 0 && (
+                      <>
+                        <Divider label={`参与者 (${data.actors.length})`} labelPosition="left" my="sm" />
+                        <Stack gap="xs">
+                          {data.actors.map((actor: any, i: number) => (
+                            <Group key={i} gap="xs">
+                              <Badge size="xs" variant="light">{actor.roleType}</Badge>
+                              <Text size="sm">{actor.name}</Text>
+                              {actor.description && (
+                                <Text size="xs" c="dimmed">- {actor.description}</Text>
+                              )}
+                            </Group>
+                          ))}
+                        </Stack>
+                      </>
+                    )}
+                  </Paper>
+                </>
+              )}
 
-          <div>
-            <Text fw={500} mb="xs">修正数据（可编辑）：</Text>
-            <Textarea
-              value={JSON.stringify(currentData, null, 2)}
-              onChange={(e) => {
-                try {
-                  setModifiedData(JSON.parse(e.target.value))
-                } catch {
-                  // 忽略 JSON 解析错误
-                }
-              }}
-              minRows={10}
-              style={{ fontFamily: 'monospace', fontSize: 12 }}
-            />
-          </div>
+              {item.type === 'PERSON' && data && (
+                <Paper p="md" withBorder>
+                  <Text size="lg" fw={500} mb="xs">{data.name}</Text>
+                  {data.aliases?.length > 0 && (
+                    <Text size="sm" c="dimmed" mb="sm">别名: {data.aliases.join(', ')}</Text>
+                  )}
+                  <Group gap="xs" mb="sm">
+                    <Badge size="sm">{data.role}</Badge>
+                    <Badge size="sm" variant="light">{data.faction}</Badge>
+                    {data.birthYear && <Text size="sm" c="dimmed">{data.birthYear} ~ {data.deathYear || '?'}</Text>}
+                  </Group>
+                  <Divider label="传记" labelPosition="left" mb="sm" />
+                  <Text size="sm">{data.biography}</Text>
+                </Paper>
+              )}
 
-          <Textarea
-            label="审核备注"
-            placeholder="输入审核备注"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
+              {item.status === 'PENDING' && (
+                <Group justify="flex-end">
+                  <Button
+                    color="red"
+                    variant="light"
+                    onClick={() => onReject(item.id)}
+                  >
+                    拒绝
+                  </Button>
+                  <Button
+                    color="green"
+                    onClick={() => onApprove(item.id)}
+                  >
+                    通过
+                  </Button>
+                </Group>
+              )}
 
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={onClose}>
-              取消
-            </Button>
-            <Button
-              color="red"
-              onClick={() => rejectMutation.mutate()}
-              loading={rejectMutation.isPending}
-            >
-              拒绝
-            </Button>
-            <Button
-              color="blue"
-              onClick={() => updateMutation.mutate()}
-              loading={updateMutation.isPending}
-            >
-              保存修改
-            </Button>
-            <Button
-              color="green"
-              onClick={() => approveMutation.mutate()}
-              loading={approveMutation.isPending}
-            >
-              通过
-            </Button>
-          </Group>
-        </Stack>
-      )}
+              {item.reviewerNotes && (
+                <Paper p="sm" withBorder bg="gray.0">
+                  <Text size="xs" fw={500}>审核备注</Text>
+                  <Text size="sm">{item.reviewerNotes}</Text>
+                </Paper>
+              )}
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="raw" pt="md">
+            <Code block style={{ maxHeight: 400, overflow: 'auto' }}>
+              {JSON.stringify(item, null, 2)}
+            </Code>
+          </Tabs.Panel>
+        </Tabs>
+      ) : null}
     </Modal>
   )
 }
 
 export default ReviewPage
-

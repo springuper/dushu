@@ -18,11 +18,10 @@ import {
 import { api } from '../../lib/api'
 import { IconUpload, IconAlertCircle, IconCheck } from '@tabler/icons-react'
 
+// MVP 版本只支持事件和人物
 const IMPORT_TYPES = [
-  { value: 'person', label: '人物' },
-  { value: 'relationship', label: '关系' },
-  { value: 'place', label: '地点' },
   { value: 'event', label: '事件' },
+  { value: 'person', label: '人物' },
 ]
 
 function ImportPage() {

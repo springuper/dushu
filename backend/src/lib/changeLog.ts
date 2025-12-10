@@ -4,9 +4,9 @@
  */
 
 import { prisma } from './prisma'
-import { Person, Place, Event, Relationship } from '@prisma/client'
+import { Person, Event } from '@prisma/client'
 
-export type EntityType = 'PERSON' | 'PLACE' | 'EVENT' | 'RELATIONSHIP'
+export type EntityType = 'PERSON' | 'EVENT'
 export type ChangeAction = 'CREATE' | 'UPDATE' | 'MERGE' | 'DELETE'
 
 export interface ChangeLogData {
@@ -47,9 +47,9 @@ export async function logChange(data: ChangeLogData): Promise<void> {
       entityId: data.entityId,
       action: data.action,
       version,
-      previousData: data.previousData || null,
+      previousData: data.previousData || undefined,
       currentData: data.currentData,
-      changes: data.changes || null,
+      changes: data.changes || undefined,
       changedBy: data.changedBy || null,
       changeReason: data.changeReason || null,
       mergedFrom: data.mergedFrom || [],

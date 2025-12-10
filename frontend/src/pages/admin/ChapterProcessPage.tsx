@@ -1,3 +1,8 @@
+/**
+ * 章节处理页面（事件中心 MVP 版本）
+ * 
+ * 简化流程：一键提取事件和人物
+ */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -16,14 +21,24 @@ import {
   Modal,
   Textarea,
   Loader,
+  Progress,
 } from '@mantine/core'
 import { api } from '../../lib/api'
 import { IconPlayerPlay, IconCheck, IconX, IconAlertCircle } from '@tabler/icons-react'
 
+const typeLabels: Record<string, string> = {
+  EVENT: '事件',
+  PERSON: '人物',
+}
+
+const typeColors: Record<string, string> = {
+  EVENT: 'blue',
+  PERSON: 'purple',
+}
+
 function ChapterProcessPage() {
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
-  const [extractTypes, setExtractTypes] = useState<string[]>(['person', 'relationship', 'place', 'event'])
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([])
   const [actionModal, setActionModal] = useState<{
     open: boolean
@@ -63,19 +78,19 @@ function ChapterProcessPage() {
     enabled: !!selectedChapterId,
   })
 
-  // 获取待审核的 ReviewItem（按章节筛选）
+  // 获取待审核的 ReviewItem
   const { data: reviewData } = useQuery({
     queryKey: ['review', 'items', { status: 'PENDING' }],
     queryFn: async () => {
-      const response = await api.get('/api/admin/review/items?status=PENDING')
+      const response = await api.get('/api/admin/review/items?status=PENDING&pageSize=50')
       return response.data
     },
   })
 
-  // 提取数据
+  // 提取数据（事件中心版本：一次性提取事件和人物）
   const extractMutation = useMutation({
-    mutationFn: async ({ chapterId, types }: { chapterId: string; types: string[] }) => {
-      const response = await api.post(`/api/admin/chapters/${chapterId}/extract`, { types })
+    mutationFn: async (chapterId: string) => {
+      const response = await api.post(`/api/admin/chapters/${chapterId}/extract`)
       return response.data
     },
     onSuccess: () => {
@@ -111,14 +126,8 @@ function ChapterProcessPage() {
 
   const handleExtract = () => {
     if (!selectedChapterId) return
-    console.log('[ChapterProcess] extract start', {
-      chapterId: selectedChapterId,
-      types: extractTypes,
-    })
-    extractMutation.mutate({
-      chapterId: selectedChapterId,
-      types: extractTypes,
-    })
+    console.log('[ChapterProcess] extract start', { chapterId: selectedChapterId })
+    extractMutation.mutate(selectedChapterId)
   }
 
   const handleBatchAction = (action: 'approve' | 'reject') => {
@@ -137,6 +146,9 @@ function ChapterProcessPage() {
   const books = booksData || []
   const chapters = chaptersData?.items || []
   const reviewItems = reviewData?.items || []
+
+  // 获取选中章节的信息
+  const selectedChapter = chapters.find((ch: any) => ch.id === selectedChapterId)
 
   return (
     <Container size="xl" py="xl">
@@ -167,7 +179,7 @@ function ChapterProcessPage() {
                 label="选择章节"
                 data={chapters.map((chapter: any) => ({
                   value: chapter.id,
-                  label: `${chapter.title} (${chapter.paragraphCount || 0} 段)`,
+                  label: `${chapter.title} (${chapter.paragraphCount || 0} 段${chapter.eventCount ? `, ${chapter.eventCount} 事件` : ''})`,
                 }))}
                 value={selectedChapterId}
                 onChange={setSelectedChapterId}
@@ -182,87 +194,74 @@ function ChapterProcessPage() {
         {selectedChapterId && (
           <Paper p="md" withBorder>
             <Stack gap="md">
-              <Text fw={500}>数据提取</Text>
-              
-              <Group>
-                <Checkbox
-                  label="人物"
-                  checked={extractTypes.includes('person')}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setExtractTypes([...extractTypes, 'person'])
-                    } else {
-                      setExtractTypes(extractTypes.filter((t) => t !== 'person'))
-                    }
-                  }}
-                />
-                <Checkbox
-                  label="关系"
-                  checked={extractTypes.includes('relationship')}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setExtractTypes([...extractTypes, 'relationship'])
-                    } else {
-                      setExtractTypes(extractTypes.filter((t) => t !== 'relationship'))
-                    }
-                  }}
-                />
-                <Checkbox
-                  label="地点"
-                  checked={extractTypes.includes('place')}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setExtractTypes([...extractTypes, 'place'])
-                    } else {
-                      setExtractTypes(extractTypes.filter((t) => t !== 'place'))
-                    }
-                  }}
-                />
-                <Checkbox
-                  label="事件"
-                  checked={extractTypes.includes('event')}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setExtractTypes([...extractTypes, 'event'])
-                    } else {
-                      setExtractTypes(extractTypes.filter((t) => t !== 'event'))
-                    }
-                  }}
-                />
+              <Group justify="space-between">
+                <div>
+                  <Text fw={500}>数据提取</Text>
+                  <Text size="sm" c="dimmed">
+                    从章节文本中提取历史事件和人物信息
+                  </Text>
+                </div>
+                {extractStatus && (
+                  <Badge color={extractStatus.publishedEvents > 0 ? 'green' : 'gray'}>
+                    {extractStatus.publishedEvents > 0 
+                      ? `已有 ${extractStatus.publishedEvents} 个事件` 
+                      : '未提取'}
+                  </Badge>
+                )}
               </Group>
+
+              {selectedChapter && (
+                <Paper p="sm" withBorder bg="gray.0">
+                  <Text size="sm" fw={500}>{selectedChapter.title}</Text>
+                  <Text size="xs" c="dimmed">
+                    {selectedChapter.paragraphCount || 0} 个段落
+                    {selectedChapter.timeRangeStart && ` | 时间: ${selectedChapter.timeRangeStart}`}
+                  </Text>
+                </Paper>
+              )}
 
               <Button
                 leftSection={<IconPlayerPlay size={16} />}
                 onClick={handleExtract}
                 loading={extractMutation.isPending}
-                disabled={extractTypes.length === 0}
+                fullWidth
               >
-                开始提取
+                开始提取事件和人物
               </Button>
 
               {extractMutation.isPending && (
                 <Alert icon={<Loader size={16} />} color="blue">
-                  正在提取数据，请稍候...
+                  <Stack gap="xs">
+                    <Text size="sm">正在使用 AI 提取数据，请稍候...</Text>
+                    <Progress value={100} animated />
+                  </Stack>
                 </Alert>
               )}
 
               {extractMutation.data && (
                 <Alert icon={<IconCheck size={16} />} color="green">
                   <Text fw={500}>提取完成</Text>
-                  <Text size="sm">
-                    人物: {extractMutation.data.counts.person} | 关系:{' '}
-                    {extractMutation.data.counts.relationship} | 地点:{' '}
-                    {extractMutation.data.counts.place} | 事件:{' '}
-                    {extractMutation.data.counts.event}
-                  </Text>
-                  {console.log('[ChapterProcess] extract success', extractMutation.data)}
+                  <Group gap="lg" mt="xs">
+                    <Text size="sm">
+                      <Badge color="blue" mr="xs">{extractMutation.data.counts?.event || 0}</Badge>
+                      事件
+                    </Text>
+                    <Text size="sm">
+                      <Badge color="purple" mr="xs">{extractMutation.data.counts?.person || 0}</Badge>
+                      人物
+                    </Text>
+                  </Group>
+                  {extractMutation.data.meta?.truncatedEvents?.length > 0 && (
+                    <Text size="xs" c="dimmed" mt="xs">
+                      注：{extractMutation.data.meta.truncatedEvents.length} 个事件因篇幅限制未能详述
+                    </Text>
+                  )}
                 </Alert>
               )}
 
               {extractMutation.error && (
                 <Alert icon={<IconAlertCircle size={16} />} color="red">
-                  {extractMutation.error?.response?.data?.error || extractMutation.error.message}
-                  {console.error('[ChapterProcess] extract error', extractMutation.error)}
+                  提取失败: {(extractMutation.error as any)?.response?.data?.error || (extractMutation.error as Error).message}
                 </Alert>
               )}
             </Stack>
@@ -273,7 +272,12 @@ function ChapterProcessPage() {
         <Paper p="md" withBorder>
           <Stack gap="md">
             <Group justify="space-between">
-              <Text fw={500}>待审核数据</Text>
+              <div>
+                <Text fw={500}>待审核数据</Text>
+                <Text size="sm" c="dimmed">
+                  共 {reviewItems.length} 条待审核
+                </Text>
+              </div>
               <Group>
                 <Button
                   variant="light"
@@ -303,7 +307,7 @@ function ChapterProcessPage() {
                 暂无待审核数据
               </Text>
             ) : (
-              <Table>
+              <Table striped withTableBorder>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th style={{ width: 40 }}>
@@ -311,6 +315,10 @@ function ChapterProcessPage() {
                         checked={
                           selectedReviewIds.length === reviewItems.length &&
                           reviewItems.length > 0
+                        }
+                        indeterminate={
+                          selectedReviewIds.length > 0 &&
+                          selectedReviewIds.length < reviewItems.length
                         }
                         onChange={(e) => {
                           if (e.target.checked) {
@@ -321,15 +329,14 @@ function ChapterProcessPage() {
                         }}
                       />
                     </Table.Th>
-                    <Table.Th>类型</Table.Th>
-                    <Table.Th>数据</Table.Th>
-                    <Table.Th>状态</Table.Th>
+                    <Table.Th style={{ width: 80 }}>类型</Table.Th>
+                    <Table.Th>内容</Table.Th>
+                    <Table.Th style={{ width: 100 }}>时间</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {reviewItems.map((item: any) => {
                     const data = item.modifiedData || item.originalData
-                    const name = data?.name || data?.sourceId || '未知'
                     return (
                       <Table.Tr key={item.id}>
                         <Table.Td>
@@ -347,29 +354,35 @@ function ChapterProcessPage() {
                           />
                         </Table.Td>
                         <Table.Td>
-                          <Badge>
-                            {item.type === 'PERSON'
-                              ? '人物'
-                              : item.type === 'RELATIONSHIP'
-                              ? '关系'
-                              : item.type === 'PLACE'
-                              ? '地点'
-                              : '事件'}
+                          <Badge size="sm" color={typeColors[item.type] || 'gray'}>
+                            {typeLabels[item.type] || item.type}
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          <Text size="sm">{name}</Text>
+                          <Stack gap={2}>
+                            <Text size="sm" fw={500}>{data?.name || '未知'}</Text>
+                            {item.type === 'EVENT' && data?.summary && (
+                              <Text size="xs" c="dimmed" lineClamp={1}>
+                                {data.summary}
+                              </Text>
+                            )}
+                            {item.type === 'PERSON' && (
+                              <Text size="xs" c="dimmed">
+                                {data?.role} | {data?.faction}
+                                {data?.aliases?.length > 0 && ` | 别名: ${data.aliases.join(', ')}`}
+                              </Text>
+                            )}
+                          </Stack>
                         </Table.Td>
                         <Table.Td>
-                          <Badge color={item.status === 'PENDING' ? 'yellow' : 'gray'}>
-                            {item.status === 'PENDING'
-                              ? '待审核'
-                              : item.status === 'APPROVED'
-                              ? '已通过'
-                              : item.status === 'REJECTED'
-                              ? '已拒绝'
-                              : '已修改'}
-                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            {new Date(item.createdAt).toLocaleString('zh-CN', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </Text>
                         </Table.Td>
                       </Table.Tr>
                     )
@@ -391,12 +404,12 @@ function ChapterProcessPage() {
           <Text>
             确定要{actionModal.action === 'approve' ? '通过' : '拒绝'}{' '}
             {actionModal.ids.length} 条数据吗？
-            {actionModal.action === 'approve' && (
-              <Text size="sm" c="dimmed" mt="xs">
-                通过后将直接发布（状态设为 PUBLISHED）
-              </Text>
-            )}
           </Text>
+          {actionModal.action === 'approve' && (
+            <Alert color="blue" variant="light">
+              通过后将直接发布，数据将对读者可见
+            </Alert>
+          )}
           <Textarea
             label="备注（可选）"
             placeholder="输入审核备注..."
@@ -422,7 +435,7 @@ function ChapterProcessPage() {
                 batchApproveMutation.isPending || batchRejectMutation.isPending
               }
             >
-              确认
+              确认{actionModal.action === 'approve' ? '通过' : '拒绝'}
             </Button>
           </Group>
         </Stack>
@@ -432,4 +445,3 @@ function ChapterProcessPage() {
 }
 
 export default ChapterProcessPage
-

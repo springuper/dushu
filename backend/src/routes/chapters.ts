@@ -1,3 +1,6 @@
+/**
+ * 章节路由（事件中心 MVP 版本）
+ */
 import express from 'express'
 import multer from 'multer'
 import { prisma } from '../lib/prisma'
@@ -58,6 +61,7 @@ router.get('/', async (req, res) => {
           _count: {
             select: {
               paragraphs: true,
+              events: true,
             },
           },
         },
@@ -72,6 +76,7 @@ router.get('/', async (req, res) => {
       items: chapters.map((ch) => ({
         ...ch,
         paragraphCount: ch._count.paragraphs,
+        eventCount: ch._count.events,
       })),
       total,
       page: Number(page),
@@ -104,6 +109,10 @@ router.get('/:id', async (req, res) => {
               },
             },
           },
+        },
+        events: {
+          where: { status: 'PUBLISHED' },
+          orderBy: { timeRangeStart: 'asc' },
         },
       },
     })
@@ -329,7 +338,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 })
 
-// 从章节提取数据（LLM 提取）
+// 从章节提取数据（LLM 提取 - 事件中心版本）
 router.post('/:id/extract', requireAuth, async (req, res) => {
   try {
     const { id } = req.params
@@ -353,80 +362,67 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
     const chapterText = chapter.paragraphs.map((p) => p.text).join('\n\n')
     const extractor = new LLMExtractor()
 
-    // 获取已有实体（PUBLISHED 状态），用于对齐
-    const [existingPersons, existingPlaces] = await Promise.all([
-      prisma.person.findMany({
-        where: { status: 'PUBLISHED' },
-        select: { id: true, name: true, aliases: true },
-        take: 200, // 限制数量，避免 prompt 过长
-      }),
-      prisma.place.findMany({
-        where: { status: 'PUBLISHED' },
-        select: { id: true, name: true },
-        take: 100,
-      }),
-    ])
-
-    console.info('[extract] start mixed mode', {
+    console.info('[extract] start event-centric extraction', {
       chapterId: id,
       paragraphCount: chapter.paragraphs.length,
-      existingPersons: existingPersons.length,
-      existingPlaces: existingPlaces.length,
+      textLength: chapterText.length,
     })
 
-    const mixedResults = await extractor.extractMixed(chapterText, chapter.paragraphs, existingPersons, existingPlaces)
+    // 使用新的事件中心提取方法
+    const results = await extractor.extract(chapterText, chapter.paragraphs, id)
 
-    // 创建 ReviewItem
-    const reviewItems: any = { person: [], relationship: [], place: [], event: [] }
+    // 创建 ReviewItem（只有 EVENT 和 PERSON 两种类型）
+    const reviewItems: { event: any[]; person: any[] } = { event: [], person: [] }
 
-    const toCreate = [
-      { key: 'person', type: 'PERSON', items: mixedResults.persons },
-      { key: 'relationship', type: 'RELATIONSHIP', items: mixedResults.relationships },
-      { key: 'place', type: 'PLACE', items: mixedResults.places },
-      { key: 'event', type: 'EVENT', items: mixedResults.events },
-    ] as const
-
-    for (const entry of toCreate) {
-      for (const item of entry.items) {
-        const reviewItem = await prisma.reviewItem.create({
-          data: {
-            type: entry.type,
-            status: 'PENDING',
-            source: 'LLM_EXTRACT',
-            originalData: { ...item, chapterId: id },
-          },
-        })
-        reviewItems[entry.key].push(reviewItem)
-      }
+    // 创建事件 ReviewItem
+    for (const event of results.events) {
+      const reviewItem = await prisma.reviewItem.create({
+        data: {
+          type: 'EVENT',
+          status: 'PENDING',
+          source: 'LLM_EXTRACT',
+          originalData: JSON.parse(JSON.stringify({
+            ...event,
+            chapterId: id,
+          })),
+        },
+      })
+      reviewItems.event.push(reviewItem)
     }
 
-    // 更新章节提取状态（可选，如果添加了字段）
-    // await prisma.chapter.update({
-    //   where: { id },
-    //   data: {
-    //     extractedAt: new Date(),
-    //   },
-    // })
+    // 创建人物 ReviewItem
+    for (const person of results.persons) {
+      const reviewItem = await prisma.reviewItem.create({
+        data: {
+          type: 'PERSON',
+          status: 'PENDING',
+          source: 'LLM_EXTRACT',
+          originalData: JSON.parse(JSON.stringify({
+            ...person,
+            chapterId: id,
+            sourceChapterIds: [id],
+          })),
+        },
+      })
+      reviewItems.person.push(reviewItem)
+    }
 
     console.info('[extract] success', {
       chapterId: id,
       counts: {
-        person: reviewItems.person.length,
-        relationship: reviewItems.relationship.length,
-        place: reviewItems.place.length,
         event: reviewItems.event.length,
+        person: reviewItems.person.length,
       },
+      meta: results.meta,
     })
 
     res.json({
       success: true,
       results: reviewItems,
-      meta: mixedResults.meta,
+      meta: results.meta,
       counts: {
-        person: reviewItems.person.length,
-        relationship: reviewItems.relationship.length,
-        place: reviewItems.place.length,
         event: reviewItems.event.length,
+        person: reviewItems.person.length,
       },
     })
   } catch (error: any) {
@@ -451,40 +447,38 @@ router.get('/:id/extract-status', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Chapter not found' })
     }
 
-    // 统计该章节相关的 ReviewItem 数量
-    // 通过检查 originalData 中是否包含章节信息来判断
-    // 这里简化处理，统计所有待审核的 ReviewItem
+    // 统计该章节相关的 ReviewItem 数量（通过 originalData.chapterId）
+    // 由于 Prisma 对 JSON 字段的查询有限制，这里简化处理
     const pendingCounts = {
-      person: await prisma.reviewItem.count({
-        where: {
-          type: 'PERSON',
-          status: 'PENDING',
-        },
-      }),
-      relationship: await prisma.reviewItem.count({
-        where: {
-          type: 'RELATIONSHIP',
-          status: 'PENDING',
-        },
-      }),
-      place: await prisma.reviewItem.count({
-        where: {
-          type: 'PLACE',
-          status: 'PENDING',
-        },
-      }),
       event: await prisma.reviewItem.count({
         where: {
           type: 'EVENT',
           status: 'PENDING',
         },
       }),
+      person: await prisma.reviewItem.count({
+        where: {
+          type: 'PERSON',
+          status: 'PENDING',
+        },
+      }),
     }
+
+    // 统计该章节已发布的事件数量
+    const publishedEventCount = await prisma.event.count({
+      where: {
+        chapterId: id,
+        status: 'PUBLISHED',
+      },
+    })
 
     res.json({
       chapterId: id,
-      status: 'completed', // 简化处理
-      counts: pendingCounts,
+      status: publishedEventCount > 0 ? 'extracted' : 'pending',
+      counts: {
+        ...pendingCounts,
+        publishedEvents: publishedEventCount,
+      },
     })
   } catch (error: any) {
     console.error('Get extract status error:', error)
@@ -492,5 +486,25 @@ router.get('/:id/extract-status', requireAuth, async (req, res) => {
   }
 })
 
-export default router
+// 获取章节的事件列表
+router.get('/:id/events', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { status = 'PUBLISHED' } = req.query
 
+    const events = await prisma.event.findMany({
+      where: {
+        chapterId: id,
+        status: status as any,
+      },
+      orderBy: { timeRangeStart: 'asc' },
+    })
+
+    res.json(events)
+  } catch (error) {
+    console.error('Get chapter events error:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+export default router

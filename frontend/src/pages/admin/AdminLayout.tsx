@@ -47,7 +47,7 @@ function AdminLayout() {
     {
       label: '数据准备',
       children: [
-        { label: 'Review', path: '/admin/review' },
+        { label: '审核管理', path: '/admin/review' },
         { label: '批量导入', path: '/admin/import' },
       ],
     },
@@ -57,16 +57,13 @@ function AdminLayout() {
         { label: '书籍管理', path: '/admin/books' },
         { label: '书籍章节', path: '/admin/chapters' },
         { label: '章节处理', path: '/admin/chapter-process' },
-        { label: '人物管理', path: '/admin/persons' },
-        { label: '关系管理', path: '/admin/relationships' },
-        { label: '地点管理', path: '/admin/places' },
         { label: '事件管理', path: '/admin/events' },
+        { label: '人物管理', path: '/admin/persons' },
       ],
     },
     {
       label: '系统管理',
       children: [
-        { label: '数据备份', path: '/admin/backup' },
         { label: '操作日志', path: '/admin/logs' },
       ],
     },

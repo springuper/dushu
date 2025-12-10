@@ -10,7 +10,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================
 // 枚举类型
+// ============================================
+
 enum PersonRole {
   MONARCH          // 君主
   ADVISOR          // 谋士
@@ -29,30 +32,20 @@ enum Faction {
   OTHER    // 其他
 }
 
-enum RelationshipType {
-  ALLY           // 盟友
-  ENEMY          // 敌对
-  SUPERIOR       // 上下级
-  SUBORDINATE    // 下级
-  KINSHIP        // 族亲
-  TEACHER_STUDENT // 师徒
-  OTHER          // 其他
-}
-
-enum PlaceType {
-  CITY        // 城池
-  BATTLEFIELD // 战场
-  RIVER       // 河流
-  MOUNTAIN    // 山脉
-  REGION      // 地区
-  OTHER       // 其他
-}
-
 enum EventType {
   BATTLE    // 战役
   POLITICAL // 政治事件
   PERSONAL  // 人物事件
   OTHER     // 其他
+}
+
+enum TimePrecision {
+  EXACT_DATE   // 精确到日
+  MONTH        // 精确到月
+  SEASON       // 精确到季节
+  YEAR         // 精确到年
+  DECADE       // 精确到十年
+  APPROXIMATE  // 大致时间
 }
 
 enum ContentStatus {
@@ -62,6 +55,10 @@ enum ContentStatus {
   PUBLISHED  // 已发布
   REJECTED   // 已拒绝
 }
+
+// ============================================
+// 书籍相关模型
+// ============================================
 
 // 书籍
 model Book {
@@ -101,7 +98,7 @@ model Chapter {
 
   book           Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
   paragraphs     Paragraph[]
-  events         Event[]     @relation("ChapterEvents")
+  events         Event[]
 
   @@index([bookId])
   @@index([order])
@@ -118,11 +115,6 @@ model Paragraph {
 
   chapter       Chapter      @relation(fields: [chapterId], references: [id], onDelete: Cascade)
   annotations   Annotation[]
-  
-  // 关联（通过中间表）
-  relatedPersons ParagraphPerson[]
-  relatedPlaces  ParagraphPlace[]
-  relatedEvents  ParagraphEvent[]
 
   @@index([chapterId])
   @@index([order])
@@ -143,35 +135,67 @@ model Annotation {
   @@index([paragraphId])
 }
 
-// 人物
-model Person {
-  id              String        @id @default(uuid())
-  name            String        // 姓名
-  aliases         String[]      // 别称数组（PostgreSQL 数组）
-  role            PersonRole
-  faction         Faction
-  birthYear       String?       // 生年
-  deathYear       String?       // 卒年
-  activePeriodStart String?     // 活跃年代开始
-  activePeriodEnd   String?     // 活跃年代结束
-  biography       String        @db.Text // 简介
-  keyEvents       String[]      // 关键事件ID列表
-  portraitUrl     String?       // 画像链接
-  firstAppearanceChapterId String? // 首次出现章节ID
-  firstAppearanceParagraphId String? // 首次出现段落ID
-  status          ContentStatus @default(DRAFT)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+// ============================================
+// 核心数据模型（事件中心）
+// ============================================
 
-  // 关系
-  sourceRelationships Relationship[] @relation("SourcePerson")
-  targetRelationships Relationship[] @relation("TargetPerson")
+// 事件 - 核心原子数据单元
+// actors 字段格式: [{ personId?: string, name: string, roleType: string, description?: string }]
+model Event {
+  id                 String        @id @default(uuid())
+  name               String        // 事件名称
+  type               EventType
+  timeRangeStart     String        // 开始时间
+  timeRangeEnd       String?       // 结束时间
+  timePrecision      TimePrecision @default(YEAR)
   
-  // 段落关联
-  relatedParagraphs ParagraphPerson[]
+  // 地点信息（JSON 内嵌，不再单独建表）
+  locationName       String?       // 历史地名
+  locationModernName String?       // 现代地名
   
-  // 事件参与
-  eventParticipants EventParticipant[]
+  // 内容
+  summary            String        @db.Text // 事件简述
+  impact             String?       @db.Text // 影响描述
+  
+  // 参与者（JSON 内嵌）
+  // 格式: [{ personId: string|null, name: string, roleType: string, description?: string }]
+  actors             Json          @default("[]")
+  
+  // 来源
+  chapterId          String
+  relatedParagraphs  String[]      // 相关段落ID列表
+  
+  status             ContentStatus @default(DRAFT)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  chapter            Chapter       @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@index([chapterId])
+  @@index([name])
+  @@index([type])
+  @@index([timeRangeStart])
+  @@index([status])
+}
+
+// 人物 - 跨章节聚合信息
+model Person {
+  id               String        @id @default(uuid())
+  name             String        // 姓名
+  aliases          String[]      // 别称数组（PostgreSQL 数组）
+  role             PersonRole
+  faction          Faction
+  birthYear        String?       // 生年
+  deathYear        String?       // 卒年
+  biography        String        @db.Text // 简介
+  portraitUrl      String?       // 画像链接
+  
+  // 来源追踪
+  sourceChapterIds String[]      // 信息来源章节ID列表
+  
+  status           ContentStatus @default(DRAFT)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   @@index([name])
   @@index([faction])
@@ -179,151 +203,9 @@ model Person {
   @@index([status])
 }
 
-// 关系
-model Relationship {
-  id                String           @id @default(uuid())
-  sourceId          String
-  targetId          String
-  type              RelationshipType
-  description       String           @db.Text // 关系描述
-  referenceChapters  String[]        // 参考章节ID列表
-  confidence        Int              @default(3) // 可信等级, 1-5
-  timeRangeStart    String?          // 关系时间范围开始
-  timeRangeEnd      String?          // 关系时间范围结束
-  status            ContentStatus    @default(DRAFT)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-
-  sourcePerson      Person           @relation("SourcePerson", fields: [sourceId], references: [id], onDelete: Cascade)
-  targetPerson      Person           @relation("TargetPerson", fields: [targetId], references: [id], onDelete: Cascade)
-
-  @@unique([sourceId, targetId, type]) // 防止重复关系
-  @@index([sourceId])
-  @@index([targetId])
-  @@index([type])
-  @@index([status])
-}
-
-// 地点
-model Place {
-  id                    String        @id @default(uuid())
-  name                  String        // 历史名称
-  modernName            String        // 现代地理名称
-  coordinatesLng       Float         // 经度
-  coordinatesLat        Float         // 纬度
-  type                  PlaceType
-  faction               Faction?
-  relatedEvents         String[]      // 相关事件ID列表
-  description           String        @db.Text // 地点描述
-  firstAppearanceChapterId String?     // 首次出现章节ID
-  firstAppearanceParagraphId String?   // 首次出现段落ID
-  status                ContentStatus @default(DRAFT)
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
-
-  // 段落关联
-  relatedParagraphs    ParagraphPlace[]
-  
-  // 事件关联
-  events                Event[]
-
-  @@index([name])
-  @@index([type])
-  @@index([faction])
-  @@index([status])
-}
-
-// 事件
-model Event {
-  id                  String        @id @default(uuid())
-  name                String        // 事件名称
-  timeRangeStart      String        // 开始时间
-  timeRangeEnd        String?       // 结束时间
-  timeRangeLunar      String?       // 农历
-  locationId          String?       // 地点ID
-  summary             String        @db.Text // 事件简述
-  type                EventType
-  impact              String?        @db.Text // 影响描述
-  relatedParagraphs   String[]      // 相关段落ID列表
-  status              ContentStatus @default(DRAFT)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
-
-  chapter             Chapter?      @relation("ChapterEvents", fields: [chapterId], references: [id])
-  chapterId           String?
-  location            Place?        @relation(fields: [locationId], references: [id])
-  
-  // 参与人物
-  participants        EventParticipant[]
-  
-  // 段落关联
-  relatedParagraphsRel ParagraphEvent[]
-
-  @@index([name])
-  @@index([type])
-  @@index([locationId])
-  @@index([status])
-}
-
-// 中间表：段落-人物关联
-model ParagraphPerson {
-  id          String   @id @default(uuid())
-  paragraphId String
-  personId    String
-  createdAt   DateTime @default(now())
-
-  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
-  person      Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
-
-  @@unique([paragraphId, personId])
-  @@index([paragraphId])
-  @@index([personId])
-}
-
-// 中间表：段落-地点关联
-model ParagraphPlace {
-  id          String   @id @default(uuid())
-  paragraphId String
-  placeId     String
-  createdAt   DateTime @default(now())
-
-  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
-  place       Place     @relation(fields: [placeId], references: [id], onDelete: Cascade)
-
-  @@unique([paragraphId, placeId])
-  @@index([paragraphId])
-  @@index([placeId])
-}
-
-// 中间表：段落-事件关联
-model ParagraphEvent {
-  id          String   @id @default(uuid())
-  paragraphId String
-  eventId     String
-  createdAt   DateTime @default(now())
-
-  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
-  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-
-  @@unique([paragraphId, eventId])
-  @@index([paragraphId])
-  @@index([eventId])
-}
-
-// 中间表：事件-人物参与
-model EventParticipant {
-  id        String   @id @default(uuid())
-  eventId   String
-  personId  String
-  createdAt DateTime  @default(now())
-
-  event     Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  person    Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
-
-  @@unique([eventId, personId])
-  @@index([eventId])
-  @@index([personId])
-}
+// ============================================
+// 管理与审核模型
+// ============================================
 
 // 管理员
 model Admin {
@@ -339,7 +221,7 @@ model Admin {
 // Review 项目（待审核的数据）
 model ReviewItem {
   id          String        @id @default(uuid())
-  type        ReviewItemType // 类型：人物/关系/地点/事件
+  type        ReviewItemType // 类型：事件/人物
   status      ReviewStatus  @default(PENDING)
   source      ReviewSource  @default(LLM_EXTRACT) // 来源：LLM 提取/手动录入
   originalData Json         // 原始数据（LLM 提取的 JSON）
@@ -356,11 +238,10 @@ model ReviewItem {
   @@index([createdAt])
 }
 
+// 简化后的 ReviewItemType - 只有事件和人物
 enum ReviewItemType {
-  PERSON       // 人物
-  RELATIONSHIP // 关系
-  PLACE        // 地点
   EVENT        // 事件
+  PERSON       // 人物
 }
 
 enum ReviewStatus {
@@ -378,7 +259,7 @@ enum ReviewSource {
 // 变更日志（记录所有数据变更）
 model ChangeLog {
   id            String        @id @default(uuid())
-  entityType    String        // 实体类型：PERSON, PLACE, EVENT, RELATIONSHIP
+  entityType    String        // 实体类型：PERSON, EVENT
   entityId      String        // 实体ID
   action        ChangeAction  // 变更操作
   version       Int           @default(1) // 版本号

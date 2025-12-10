@@ -31,8 +31,9 @@ router.post('/login', async (req, res) => {
     }
 
     // 设置 session
-    req.session!.adminId = admin.id
-    req.session!.username = admin.username
+    const session = req.session as any
+    session.adminId = admin.id
+    session.username = admin.username
 
     res.json({
       success: true,
@@ -40,8 +41,7 @@ router.post('/login', async (req, res) => {
         id: admin.id,
         username: admin.username,
       },
-    },
-    )
+    })
   } catch (error) {
     console.error('Login error:', error)
     res.status(500).json({ error: 'Internal server error' })
@@ -50,15 +50,21 @@ router.post('/login', async (req, res) => {
 
 // 登出
 router.post('/logout', requireAuth, (req, res) => {
-  req.session = undefined
-  res.json({ success: true })
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Logout error:', err)
+      return res.status(500).json({ error: 'Internal server error' })
+    }
+    res.json({ success: true })
+  })
 })
 
 // 获取当前管理员信息
 router.get('/me', requireAuth, async (req, res) => {
   try {
+    const session = req.session as any
     const admin = await prisma.admin.findUnique({
-      where: { id: req.session!.adminId },
+      where: { id: session?.adminId },
       select: {
         id: true,
         username: true,
@@ -77,4 +83,3 @@ router.get('/me', requireAuth, async (req, res) => {
 })
 
 export default router
-

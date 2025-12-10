@@ -1,8 +1,12 @@
+/**
+ * 导入路由（事件中心 MVP 版本）
+ * 
+ * 支持批量导入 EVENT 和 PERSON 数据
+ */
 import express from 'express'
 import multer from 'multer'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
-import { LLMMerger } from '../lib/llmMerger'
 
 const router = express.Router()
 
@@ -28,16 +32,21 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: '请上传文件' })
     }
 
-    const { type, mode = 'new' } = req.body // type: 'person' | 'relationship' | 'place' | 'event'
+    const { type } = req.body // type: 'person' | 'event'
     console.info('[import] batch start', {
       filename: req.file.originalname,
       size: req.file.size,
       type,
-      mode,
     })
 
     if (!type) {
       return res.status(400).json({ error: '请指定导入类型' })
+    }
+
+    // 验证类型（MVP 只支持 person 和 event）
+    const validTypes = ['person', 'event']
+    if (!validTypes.includes(type.toLowerCase())) {
+      return res.status(400).json({ error: `不支持的类型: ${type}。仅支持: ${validTypes.join(', ')}` })
     }
 
     // 解析 JSON 文件
@@ -84,126 +93,31 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
       errors: errors.length,
     })
 
-    // 使用 LLM 检测重复（仅对人物类型）
-    let duplicateChecks: any[] = []
-    if (type.toLowerCase() === 'person') {
-      // 获取所有已审核通过的人物
-      const existingPersons = await prisma.person.findMany({
-        where: {
-          status: {
-            in: ['APPROVED', 'PUBLISHED'],
-          },
-        },
-      })
-
-      const merger = new LLMMerger()
-
-      // 检查每个待导入的人物
-      duplicateChecks = await Promise.all(
-        validItems.map(async (item: any) => {
-          // 查找可能的匹配（基于姓名和别名）
-          const possibleMatches = existingPersons.filter((p) => {
-            const nameMatch = p.name === item.name
-            const aliasMatch =
-              p.aliases.includes(item.name) ||
-              (item.aliases || []).some((alias: string) => p.aliases.includes(alias)) ||
-              (item.aliases || []).includes(p.name)
-            return nameMatch || aliasMatch
-          })
-
-          if (possibleMatches.length === 0) {
-            return {
-              itemIndex: validItems.indexOf(item),
-              isDuplicate: false,
-              matchingPersonId: null,
-              confidence: 0,
-              reasons: [],
-            }
-          }
-
-          // 对每个可能的匹配，使用 LLM 判断
-          let bestMatch: any = null
-          let bestConfidence = 0
-
-          for (const existing of possibleMatches) {
-            try {
-              const mergeResult = await merger.mergePerson(existing, item)
-              if (mergeResult.shouldMerge && mergeResult.confidence > bestConfidence) {
-                bestConfidence = mergeResult.confidence
-                bestMatch = {
-                  personId: existing.id,
-                  confidence: mergeResult.confidence,
-                  reason: mergeResult.reason,
-                }
-              }
-            } catch (error) {
-              console.error('LLM 融合检查错误:', error)
-            }
-          }
-
-          return {
-            itemIndex: validItems.indexOf(item),
-            isDuplicate: bestMatch !== null && bestConfidence >= 0.5,
-            matchingPersonId: bestMatch?.personId || null,
-            confidence: bestConfidence,
-            reasons: bestMatch ? [bestMatch.reason] : [],
-          }
-        })
-      )
-    }
-
     // 创建 ReviewItem 记录
     const reviewItems = await Promise.all(
-      validItems.map((item, index) => {
-        const duplicateCheck = duplicateChecks[index]
+      validItems.map((item) => {
         return prisma.reviewItem.create({
           data: {
-            type: type.toUpperCase(),
+            type: type.toUpperCase() as 'EVENT' | 'PERSON',
             status: 'PENDING',
             source: 'LLM_EXTRACT',
             originalData: item,
-            // 如果有匹配的人物，在 originalData 中添加标记
-            // 注意：这里我们暂时在 originalData 中添加，后续可以考虑添加数据库字段
           },
         })
       })
     )
 
-    // 为有重复的 ReviewItem 添加标记（通过更新 originalData）
-    for (let i = 0; i < reviewItems.length; i++) {
-      const duplicateCheck = duplicateChecks[i]
-      if (duplicateCheck && duplicateCheck.isDuplicate) {
-        const updatedData = {
-          ...reviewItems[i].originalData,
-          _duplicateCheck: {
-            isDuplicate: true,
-            matchingPersonId: duplicateCheck.matchingPersonId,
-            confidence: duplicateCheck.confidence,
-            reasons: duplicateCheck.reasons,
-          },
-        }
-        await prisma.reviewItem.update({
-          where: { id: reviewItems[i].id },
-          data: { originalData: updatedData },
-        })
-      }
-    }
-
-    // 统计重复数量
-    const duplicateCount = duplicateChecks.filter((c) => c?.isDuplicate).length
-
     console.info('[import] batch success', {
       total: data.length,
       successCount: validItems.length,
       errorCount: errors.length,
-      duplicateCount,
     })
+    
     res.json({
       success: true,
       total: data.length,
       successCount: validItems.length,
       errorCount: errors.length,
-      duplicateCount,
       errors: errors.slice(0, 10), // 只返回前 10 个错误
       reviewItems: reviewItems.map((item) => ({
         id: item.id,
@@ -230,36 +144,17 @@ function validateItem(item: any, type: string): string | null {
       if (!item.name || typeof item.name !== 'string') {
         return '缺少必填字段: name'
       }
-      if (!item.biography || typeof item.biography !== 'string') {
-        return '缺少必填字段: biography'
-      }
-      break
-
-    case 'relationship':
-      if (!item.sourceId || !item.targetId) {
-        return '缺少必填字段: sourceId 或 targetId'
-      }
-      if (!item.type) {
-        return '缺少必填字段: type'
-      }
-      break
-
-    case 'place':
-      if (!item.name || typeof item.name !== 'string') {
-        return '缺少必填字段: name'
-      }
-      if (!item.coordinates || !item.coordinates.lng || !item.coordinates.lat) {
-        return '缺少必填字段: coordinates (lng, lat)'
-      }
+      // biography 可以为空，会在审核时自动填充默认值
       break
 
     case 'event':
       if (!item.name || typeof item.name !== 'string') {
         return '缺少必填字段: name'
       }
-      if (!item.timeRange || !item.timeRange.start) {
-        return '缺少必填字段: timeRange.start'
+      if (!item.chapterId) {
+        return '缺少必填字段: chapterId'
       }
+      // timeRangeStart 可以为空，会在审核时自动填充默认值
       break
 
     default:
@@ -270,4 +165,3 @@ function validateItem(item: any, type: string): string | null {
 }
 
 export default router
-

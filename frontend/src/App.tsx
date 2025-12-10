@@ -13,8 +13,6 @@ import ChaptersPage from './pages/admin/ChaptersPage'
 import BooksPage from './pages/admin/BooksPage'
 import ChapterProcessPage from './pages/admin/ChapterProcessPage'
 import EventsPage from './pages/admin/EventsPage'
-import PlacesPage from './pages/admin/PlacesPage'
-import RelationshipsPage from './pages/admin/RelationshipsPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
@@ -39,11 +37,8 @@ function App() {
         <Route path="books" element={<BooksPage />} />
         <Route path="chapters" element={<ChaptersPage />} />
         <Route path="chapter-process" element={<ChapterProcessPage />} />
-        <Route path="persons" element={<PersonsPage />} />
-        <Route path="relationships" element={<RelationshipsPage />} />
-        <Route path="places" element={<PlacesPage />} />
         <Route path="events" element={<EventsPage />} />
-        <Route path="backup" element={<div>数据备份（开发中）</div>} />
+        <Route path="persons" element={<PersonsPage />} />
         <Route path="logs" element={<div>操作日志（开发中）</div>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
