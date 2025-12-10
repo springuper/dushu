@@ -8,8 +8,10 @@ import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { logChange } from '../lib/changeLog'
 import { PersonRole, Faction } from '@prisma/client'
+import { createLogger } from '../lib/logger'
 
 const router = express.Router()
+const logger = createLogger('persons')
 
 // 角色映射
 function mapRole(role: string | undefined | null): PersonRole {
@@ -97,16 +99,16 @@ router.get('/', requireAuth, async (req, res) => {
       pageSize: Number(pageSize),
       totalPages: Math.ceil(total / Number(pageSize)),
     })
-  } catch (error) {
-    console.error('Get persons error:', error)
+  } catch (error: any) {
+    logger.error('Get persons error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 获取人物详情
 router.get('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const { chapterId } = req.query
 
     const person = await prisma.person.findUnique({
@@ -145,16 +147,16 @@ router.get('/:id', requireAuth, async (req, res) => {
     }
 
     res.json(person)
-  } catch (error) {
-    console.error('Get person error:', error)
+  } catch (error: any) {
+    logger.error('Get person error', { personId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 获取人物参与的事件
 router.get('/:id/events', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const { status = 'PUBLISHED' } = req.query
 
     const person = await prisma.person.findUnique({
@@ -196,8 +198,8 @@ router.get('/:id/events', requireAuth, async (req, res) => {
     })
 
     res.json(participatedEvents)
-  } catch (error) {
-    console.error('Get person events error:', error)
+  } catch (error: any) {
+    logger.error('Get person events error', { personId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -236,17 +238,18 @@ router.post('/', requireAuth, async (req, res) => {
       changeReason: '手动创建',
     })
 
+    logger.info('Person created', { personId: person.id, name: person.name })
     res.json(person)
-  } catch (error) {
-    console.error('Create person error:', error)
+  } catch (error: any) {
+    logger.error('Create person error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 更新人物
 router.put('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const data = req.body
 
     const previousPerson = await prisma.person.findUnique({ where: { id } })
@@ -281,18 +284,18 @@ router.put('/:id', requireAuth, async (req, res) => {
       changeReason: '手动更新',
     })
 
+    logger.info('Person updated', { personId: id })
     res.json(person)
-  } catch (error) {
-    console.error('Update person error:', error)
+  } catch (error: any) {
+    logger.error('Update person error', { personId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 删除人物
 router.delete('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const person = await prisma.person.findUnique({ where: { id } })
     if (!person) {
       return res.status(404).json({ error: 'Person not found' })
@@ -313,9 +316,10 @@ router.delete('/:id', requireAuth, async (req, res) => {
       changeReason: '手动删除',
     })
 
+    logger.info('Person deleted', { personId: id })
     res.json({ success: true })
-  } catch (error) {
-    console.error('Delete person error:', error)
+  } catch (error: any) {
+    logger.error('Delete person error', { personId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -338,9 +342,250 @@ router.post('/batch/status', requireAuth, async (req, res) => {
       data: { status },
     })
 
+    logger.info('Persons batch status updated', { count: result.count, status })
     res.json({ success: true, count: result.count })
-  } catch (error) {
-    console.error('Batch update status error:', error)
+  } catch (error: any) {
+    logger.error('Batch update status error', { error: error.message })
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// 检测潜在重复人物
+router.get('/duplicates', requireAuth, async (req, res) => {
+  try {
+    // 获取所有人物
+    const persons = await prisma.person.findMany({
+      orderBy: { name: 'asc' },
+    })
+
+    // 构建名称到人物的映射
+    const nameMap = new Map<string, typeof persons>()
+    
+    for (const person of persons) {
+      // 添加主名称
+      const normalizedName = person.name.toLowerCase().trim()
+      if (!nameMap.has(normalizedName)) {
+        nameMap.set(normalizedName, [])
+      }
+      nameMap.get(normalizedName)!.push(person)
+      
+      // 添加别名
+      for (const alias of person.aliases) {
+        const normalizedAlias = alias.toLowerCase().trim()
+        if (!nameMap.has(normalizedAlias)) {
+          nameMap.set(normalizedAlias, [])
+        }
+        const existing = nameMap.get(normalizedAlias)!
+        if (!existing.some(p => p.id === person.id)) {
+          existing.push(person)
+        }
+      }
+    }
+
+    // 找出有重复的名称（多个人物共享同一名称或别名）
+    const duplicateGroups: Array<{
+      matchedName: string
+      persons: typeof persons
+    }> = []
+    
+    const processedPairs = new Set<string>()
+    
+    for (const [name, matchedPersons] of nameMap.entries()) {
+      if (matchedPersons.length > 1) {
+        // 生成配对 ID 以避免重复
+        const sortedIds = matchedPersons.map(p => p.id).sort().join(',')
+        if (!processedPairs.has(sortedIds)) {
+          processedPairs.add(sortedIds)
+          duplicateGroups.push({
+            matchedName: name,
+            persons: matchedPersons,
+          })
+        }
+      }
+    }
+
+    // 额外检查：名称在别名中出现
+    for (const person of persons) {
+      for (const otherPerson of persons) {
+        if (person.id === otherPerson.id) continue
+        
+        // 检查 person.name 是否在 otherPerson.aliases 中
+        if (otherPerson.aliases.some(a => a.toLowerCase() === person.name.toLowerCase())) {
+          const sortedIds = [person.id, otherPerson.id].sort().join(',')
+          if (!processedPairs.has(sortedIds)) {
+            processedPairs.add(sortedIds)
+            duplicateGroups.push({
+              matchedName: person.name,
+              persons: [person, otherPerson],
+            })
+          }
+        }
+      }
+    }
+
+    logger.info('Duplicate detection completed', { groupCount: duplicateGroups.length })
+    res.json({
+      count: duplicateGroups.length,
+      groups: duplicateGroups,
+    })
+  } catch (error: any) {
+    logger.error('Get duplicates error', { error: error.message })
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// 合并人物
+router.post('/merge', requireAuth, async (req, res) => {
+  try {
+    const { sourceIds, targetId } = req.body
+
+    if (!Array.isArray(sourceIds) || sourceIds.length === 0) {
+      return res.status(400).json({ error: '请提供要合并的人物 ID 列表' })
+    }
+
+    if (!targetId) {
+      return res.status(400).json({ error: '请提供目标人物 ID' })
+    }
+
+    if (sourceIds.includes(targetId)) {
+      return res.status(400).json({ error: '目标人物不能在源人物列表中' })
+    }
+
+    // 获取目标人物
+    const targetPerson = await prisma.person.findUnique({
+      where: { id: targetId },
+    })
+
+    if (!targetPerson) {
+      return res.status(404).json({ error: '目标人物不存在' })
+    }
+
+    // 获取源人物
+    const sourcePersons = await prisma.person.findMany({
+      where: { id: { in: sourceIds } },
+    })
+
+    if (sourcePersons.length === 0) {
+      return res.status(404).json({ error: '源人物不存在' })
+    }
+
+    const adminId = (req.session as any)?.adminId
+    const previousData = { ...targetPerson }
+
+    // 合并别名
+    const allAliases = new Set(targetPerson.aliases)
+    for (const sourcePerson of sourcePersons) {
+      // 添加源人物的名称作为别名
+      allAliases.add(sourcePerson.name)
+      // 添加源人物的所有别名
+      for (const alias of sourcePerson.aliases) {
+        allAliases.add(alias)
+      }
+    }
+    // 移除目标人物的主名称（不应作为别名）
+    allAliases.delete(targetPerson.name)
+    const mergedAliases = Array.from(allAliases).filter(Boolean)
+
+    // 合并来源章节 ID
+    const allSourceChapterIds = new Set(targetPerson.sourceChapterIds)
+    for (const sourcePerson of sourcePersons) {
+      for (const chapterId of sourcePerson.sourceChapterIds) {
+        allSourceChapterIds.add(chapterId)
+      }
+    }
+    const mergedSourceChapterIds = Array.from(allSourceChapterIds)
+
+    // 选择最长的简介
+    let bestBiography = targetPerson.biography
+    for (const sourcePerson of sourcePersons) {
+      if (sourcePerson.biography && 
+          !sourcePerson.biography.startsWith('（') &&
+          sourcePerson.biography.length > bestBiography.length) {
+        bestBiography = sourcePerson.biography
+      }
+    }
+
+    // 更新目标人物
+    const updatedPerson = await prisma.person.update({
+      where: { id: targetId },
+      data: {
+        aliases: mergedAliases,
+        sourceChapterIds: mergedSourceChapterIds,
+        biography: bestBiography,
+        // 如果目标人物没有生卒年，使用源人物的
+        birthYear: targetPerson.birthYear || sourcePersons.find(p => p.birthYear)?.birthYear || null,
+        deathYear: targetPerson.deathYear || sourcePersons.find(p => p.deathYear)?.deathYear || null,
+      },
+    })
+
+    // 更新事件中的 actors.personId
+    const events = await prisma.event.findMany({
+      where: { status: 'PUBLISHED' },
+    })
+
+    let updatedEventCount = 0
+    for (const event of events) {
+      const actors = event.actors as any[]
+      if (!actors) continue
+
+      let needsUpdate = false
+      const updatedActors = actors.map(actor => {
+        // 如果 actor 指向源人物，更新为目标人物
+        if (sourceIds.includes(actor.personId)) {
+          needsUpdate = true
+          return { ...actor, personId: targetId }
+        }
+        // 如果 actor 名称匹配源人物的名称或别名
+        for (const sourcePerson of sourcePersons) {
+          if (actor.name === sourcePerson.name || sourcePerson.aliases.includes(actor.name)) {
+            needsUpdate = true
+            return { ...actor, personId: targetId }
+          }
+        }
+        return actor
+      })
+
+      if (needsUpdate) {
+        await prisma.event.update({
+          where: { id: event.id },
+          data: { actors: updatedActors },
+        })
+        updatedEventCount++
+      }
+    }
+
+    // 删除源人物
+    await prisma.person.deleteMany({
+      where: { id: { in: sourceIds } },
+    })
+
+    // 记录变更日志
+    await logChange({
+      entityType: 'PERSON',
+      entityId: targetId,
+      action: 'MERGE',
+      previousData,
+      currentData: updatedPerson,
+      changedBy: adminId,
+      changeReason: `合并自: ${sourcePersons.map(p => p.name).join(', ')}`,
+      mergedFrom: sourceIds,
+    })
+
+    logger.info('Persons merged', {
+      targetId,
+      sourceIds,
+      mergedAliasCount: mergedAliases.length,
+      updatedEventCount,
+    })
+
+    res.json({
+      success: true,
+      mergedPerson: updatedPerson,
+      deletedCount: sourcePersons.length,
+      updatedEventCount,
+    })
+  } catch (error: any) {
+    logger.error('Merge persons error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -437,8 +682,8 @@ router.get('/relationships', requireAuth, async (req, res) => {
       sharedEventsCount: sharedEvents.length,
       timeline,
     })
-  } catch (error) {
-    console.error('Get relationships error:', error)
+  } catch (error: any) {
+    logger.error('Get relationships error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })

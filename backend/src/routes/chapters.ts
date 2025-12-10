@@ -6,16 +6,10 @@ import multer from 'multer'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { LLMExtractor } from '../lib/llmExtractor'
+import { createLogger } from '../lib/logger'
 
 const router = express.Router()
-
-// 添加路由级别的日志中间件
-router.use((req, res, next) => {
-  if (req.path.includes('/extract')) {
-    console.log('[chapters-router] Request received:', req.method, req.path, 'body:', req.body)
-  }
-  next()
-})
+const logger = createLogger('chapters')
 
 // 配置 multer（内存存储，用于 JSON 文件）
 const upload = multer({
@@ -83,17 +77,16 @@ router.get('/', async (req, res) => {
       pageSize: Number(pageSize),
       totalPages: Math.ceil(total / Number(pageSize)),
     })
-  } catch (error) {
-    console.error('Get chapters error:', error)
+  } catch (error: any) {
+    logger.error('Get chapters error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 获取章节详情
 router.get('/:id', async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const chapter = await prisma.chapter.findUnique({
       where: { id },
       include: {
@@ -122,20 +115,19 @@ router.get('/:id', async (req, res) => {
     }
 
     res.json(chapter)
-  } catch (error) {
-    console.error('Get chapter error:', error)
+  } catch (error: any) {
+    logger.error('Get chapter error', { chapterId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 导入章节（从 JSON 文件）
 router.post('/import', requireAuth, upload.single('file'), async (req, res) => {
+  const { bookId } = req.body
   try {
     if (!req.file) {
       return res.status(400).json({ error: '请上传文件' })
     }
-
-    const { bookId } = req.body
 
     if (!bookId) {
       return res.status(400).json({ error: '请指定书籍 ID' })
@@ -212,6 +204,13 @@ router.post('/import', requireAuth, upload.single('file'), async (req, res) => {
       },
     })
 
+    logger.info('Chapter imported', {
+      chapterId: chapter.id,
+      bookId,
+      title: chapter.title,
+      paragraphCount: paragraphs.length,
+    })
+
     res.json({
       success: true,
       chapter: {
@@ -221,10 +220,11 @@ router.post('/import', requireAuth, upload.single('file'), async (req, res) => {
       paragraphCount: paragraphs.length,
     })
   } catch (error: any) {
-    console.error('Import chapter error:', error)
     if (error.code === 'P2002') {
+      logger.warn('Chapter import failed - duplicate', { bookId })
       return res.status(400).json({ error: '章节已存在' })
     }
+    logger.error('Import chapter error', { bookId, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -268,17 +268,18 @@ router.post('/', requireAuth, async (req, res) => {
       },
     })
 
+    logger.info('Chapter created', { chapterId: chapter.id, bookId: data.bookId, title: chapter.title })
     res.json(chapter)
   } catch (error: any) {
-    console.error('Create chapter error:', error)
+    logger.error('Create chapter error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 更新章节
 router.put('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const data = req.body
 
     const chapter = await prisma.chapter.update({
@@ -293,21 +294,21 @@ router.put('/:id', requireAuth, async (req, res) => {
       },
     })
 
+    logger.info('Chapter updated', { chapterId: id })
     res.json(chapter)
   } catch (error: any) {
-    console.error('Update chapter error:', error)
     if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Chapter not found' })
     }
+    logger.error('Update chapter error', { chapterId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 删除章节
 router.delete('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const chapter = await prisma.chapter.findUnique({
       where: { id },
       select: { bookId: true },
@@ -331,18 +332,18 @@ router.delete('/:id', requireAuth, async (req, res) => {
       },
     })
 
+    logger.info('Chapter deleted', { chapterId: id, bookId: chapter.bookId })
     res.json({ success: true })
   } catch (error: any) {
-    console.error('Delete chapter error:', error)
+    logger.error('Delete chapter error', { chapterId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 从章节提取数据（LLM 提取 - 事件中心版本）
 router.post('/:id/extract', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     // 获取章节和段落
     const chapter = await prisma.chapter.findUnique({
       where: { id },
@@ -362,7 +363,8 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
     const chapterText = chapter.paragraphs.map((p) => p.text).join('\n\n')
     const extractor = new LLMExtractor()
 
-    console.info('[extract] start event-centric extraction', {
+    const timer = logger.startTimer('Extract')
+    logger.info('Extract started', {
       chapterId: id,
       paragraphCount: chapter.paragraphs.length,
       textLength: chapterText.length,
@@ -407,13 +409,11 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
       reviewItems.person.push(reviewItem)
     }
 
-    console.info('[extract] success', {
+    timer.end({
       chapterId: id,
-      counts: {
-        event: reviewItems.event.length,
-        person: reviewItems.person.length,
-      },
-      meta: results.meta,
+      eventCount: reviewItems.event.length,
+      personCount: reviewItems.person.length,
+      chunks: results.meta.chunks,
     })
 
     res.json({
@@ -426,9 +426,9 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
       },
     })
   } catch (error: any) {
-    console.error('[extract] error', {
-      message: error?.message,
-      stack: error?.stack,
+    logger.error('Extract failed', {
+      chapterId: id,
+      error: error.message,
     })
     res.status(500).json({ error: error.message || 'Internal server error' })
   }
@@ -436,9 +436,8 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
 
 // 获取章节提取状态
 router.get('/:id/extract-status', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const chapter = await prisma.chapter.findUnique({
       where: { id },
     })
@@ -481,15 +480,15 @@ router.get('/:id/extract-status', requireAuth, async (req, res) => {
       },
     })
   } catch (error: any) {
-    console.error('Get extract status error:', error)
+    logger.error('Get extract status error', { chapterId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 获取章节的事件列表
 router.get('/:id/events', async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const { status = 'PUBLISHED' } = req.query
 
     const events = await prisma.event.findMany({
@@ -501,8 +500,8 @@ router.get('/:id/events', async (req, res) => {
     })
 
     res.json(events)
-  } catch (error) {
-    console.error('Get chapter events error:', error)
+  } catch (error: any) {
+    logger.error('Get chapter events error', { chapterId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })

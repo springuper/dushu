@@ -7,8 +7,10 @@ import express from 'express'
 import multer from 'multer'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
+import { createLogger } from '../lib/logger'
 
 const router = express.Router()
+const logger = createLogger('import')
 
 // 配置 multer（内存存储，用于 JSON 文件）
 const upload = multer({
@@ -33,7 +35,7 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     const { type } = req.body // type: 'person' | 'event'
-    console.info('[import] batch start', {
+    logger.info('Batch import started', {
       filename: req.file.originalname,
       size: req.file.size,
       type,
@@ -87,7 +89,7 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
         validItems.push(item)
       }
     }
-    console.info('[import] validate done', {
+    logger.debug('Import validation done', {
       total: data.length,
       valid: validItems.length,
       errors: errors.length,
@@ -107,10 +109,11 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
       })
     )
 
-    console.info('[import] batch success', {
+    logger.info('Batch import completed', {
       total: data.length,
       successCount: validItems.length,
       errorCount: errors.length,
+      type,
     })
     
     res.json({
@@ -124,10 +127,9 @@ router.post('/batch', requireAuth, upload.single('file'), async (req, res) => {
         type: item.type,
       })),
     })
-  } catch (error) {
-    console.error('[import] batch error', {
-      message: (error as any)?.message,
-      stack: (error as any)?.stack,
+  } catch (error: any) {
+    logger.error('Batch import error', {
+      error: error.message,
     })
     res.status(500).json({ error: 'Internal server error' })
   }

@@ -6,6 +6,9 @@
  * - 人物 (Person)：从事件中聚合的人物信息
  */
 import { LLMService } from './llm'
+import { createLogger } from './logger'
+
+const logger = createLogger('extractor')
 
 // ============================================
 // 类型定义
@@ -88,13 +91,73 @@ export class LLMExtractor {
     paragraphs: ParagraphInput[] = [],
     chapterId?: string
   ): Promise<ExtractionResult> {
+    const timer = logger.startTimer('Extract')
+    const startTime = Date.now()
+    
+    logger.info('========== EXTRACTION STARTED ==========', {
+      chapterId,
+      paragraphCount: paragraphs.length,
+      textLength: chapterText.length,
+      textPreview: chapterText.substring(0, 150).replace(/\n/g, ' ') + '...',
+    })
+
+    // Step 1: 分块
     const chunks = this.chunkParagraphs(paragraphs, chapterText)
+    const chunkSizes = chunks.map(c => c.length)
+    logger.info('Step 1/3: Text chunked', {
+      chunks: chunks.length,
+      avgChunkSize: Math.round(chapterText.length / chunks.length),
+      chunkSizes,
+      minChunk: Math.min(...chunkSizes),
+      maxChunk: Math.max(...chunkSizes),
+    })
 
-    // 分段提取事件（包含内嵌的 actors）
+    // Step 2: 提取事件
+    logger.info('Step 2/3: Extracting events...')
+    const eventStartTime = Date.now()
     const { events, truncatedEvents } = await this.extractEvents(chunks)
+    const eventDuration = Date.now() - eventStartTime
+    
+    logger.info('Step 2/3: Events extraction done', {
+      eventCount: events.length,
+      truncated: truncatedEvents.length,
+      duration: eventDuration,
+      eventTypes: this.countByType(events, 'type'),
+    })
 
-    // 从事件中聚合人物信息，然后补全人物详细信息
+    // Step 3: 提取人物
+    logger.info('Step 3/3: Extracting persons...')
+    const personStartTime = Date.now()
     const persons = await this.extractPersons(chapterText, events)
+    const personDuration = Date.now() - personStartTime
+    
+    logger.info('Step 3/3: Persons extraction done', {
+      personCount: persons.length,
+      duration: personDuration,
+      roles: this.countByType(persons, 'role'),
+      factions: this.countByType(persons, 'faction'),
+    })
+
+    const totalDuration = Date.now() - startTime
+    timer.end({
+      chapterId,
+      eventCount: events.length,
+      personCount: persons.length,
+      chunks: chunks.length,
+    })
+
+    logger.info('========== EXTRACTION COMPLETED ==========', {
+      chapterId,
+      events: events.length,
+      persons: persons.length,
+      chunks: chunks.length,
+      truncated: truncatedEvents.length,
+      totalDuration,
+      breakdown: {
+        events: eventDuration,
+        persons: personDuration,
+      },
+    })
 
     return {
       events,
@@ -104,6 +167,18 @@ export class LLMExtractor {
         truncatedEvents,
       },
     }
+  }
+
+  /**
+   * 统计数组中某个字段的分布
+   */
+  private countByType<T extends Record<string, any>>(items: T[], field: keyof T): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const item of items) {
+      const value = String(item[field] || 'UNKNOWN')
+      counts[value] = (counts[value] || 0) + 1
+    }
+    return counts
   }
 
   /**
@@ -136,25 +211,66 @@ export class LLMExtractor {
   private async extractEvents(chunks: string[]): Promise<{ events: ExtractedEvent[]; truncatedEvents: string[] }> {
     const allEvents: ExtractedEvent[] = []
     const allTruncated: string[] = []
+    const startTime = Date.now()
 
-    for (const chunk of chunks) {
+    logger.info('Starting event extraction', { totalChunks: chunks.length })
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
       const prompt = this.buildEventPrompt(chunk)
+      const chunkStartTime = Date.now()
+      
+      logger.info(`Processing chunk ${i + 1}/${chunks.length} for events`, {
+        chunkIndex: i + 1,
+        totalChunks: chunks.length,
+        chunkLength: chunk.length,
+        chunkPreview: chunk.substring(0, 100).replace(/\n/g, ' ') + '...',
+      })
+      
       try {
         const result = await this.llm.callJSON<{
           events: ExtractedEvent[]
           truncated?: string[]
         }>(prompt, this.eventSystemPrompt())
 
+        const chunkDuration = Date.now() - chunkStartTime
+        
         if (result.events) {
           allEvents.push(...result.events)
+          // 记录提取到的事件名称
+          const eventNames = result.events.map(e => e.name).slice(0, 5)
+          logger.info(`Chunk ${i + 1} events extracted`, {
+            chunkIndex: i + 1,
+            eventsFound: result.events.length,
+            eventNames: eventNames.length < result.events.length 
+              ? [...eventNames, `...+${result.events.length - 5} more`] 
+              : eventNames,
+            actorsCount: result.events.reduce((sum, e) => sum + (e.actors?.length || 0), 0),
+            duration: chunkDuration,
+          })
         }
-        if (result.truncated) {
+        if (result.truncated && result.truncated.length > 0) {
           allTruncated.push(...result.truncated)
+          logger.warn('Some events were truncated', { truncated: result.truncated })
         }
-      } catch (err) {
-        console.error('[LLMExtractor] 事件提取错误:', err)
+      } catch (err: any) {
+        logger.error('Event extraction failed for chunk', {
+          chunkIndex: i + 1,
+          chunkLength: chunk.length,
+          error: err.message,
+          stack: err.stack?.split('\n').slice(0, 3).join(' '),
+        })
       }
     }
+
+    const totalDuration = Date.now() - startTime
+    logger.info('Event extraction completed', {
+      totalChunks: chunks.length,
+      totalEvents: allEvents.length,
+      truncatedCount: allTruncated.length,
+      totalDuration,
+      avgTimePerChunk: Math.round(totalDuration / chunks.length),
+    })
 
     return { events: allEvents, truncatedEvents: allTruncated }
   }
@@ -241,8 +357,12 @@ export class LLMExtractor {
 
 1. **事件选择**：提取文本中的重要历史事件，每批最多 20 个事件，按重要性排序
 2. **时间精度**：根据文本描述选择合适的时间精度
-3. **参与者**：详细描述每个重要人物在事件中的角色和表现
-4. **角色类型说明**：
+3. **参与者命名**：
+   - actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"）
+   - 如果文本中只出现封号/谥号，请推断其本名
+   - 这有助于后续的人物去重和关联
+4. **参与者角色**：详细描述每个重要人物在事件中的角色和表现
+5. **角色类型说明**：
    - PROTAGONIST: 事件主角
    - ALLY: 同盟/支持方
    - OPPOSING: 对立/敌对方
@@ -250,8 +370,8 @@ export class LLMExtractor {
    - EXECUTOR: 执行者/部将
    - OBSERVER: 旁观者/见证者
    - OTHER: 其他
-5. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
-6. **只输出 JSON**，不要其他说明文字
+6. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
+7. **只输出 JSON**，不要其他说明文字
 
 ## 待处理文本
 
@@ -267,6 +387,8 @@ ${text}
    * 从事件中聚合人物名单，然后补全人物详细信息
    */
   private async extractPersons(fullText: string, events: ExtractedEvent[]): Promise<ExtractedPerson[]> {
+    const startTime = Date.now()
+    
     // 从事件中收集所有人物名称
     const personNames = new Set<string>()
     events.forEach(event => {
@@ -278,20 +400,57 @@ ${text}
     })
 
     if (personNames.size === 0) {
+      logger.info('No persons found in events, skipping person extraction')
       return []
     }
 
+    const namesList = Array.from(personNames)
+    logger.info('Starting person extraction', {
+      personCount: personNames.size,
+      names: namesList.slice(0, 10),
+      moreNames: namesList.length > 10 ? `...+${namesList.length - 10} more` : undefined,
+      textLengthForPrompt: Math.min(fullText.length, 15000),
+    })
+
     // 调用 LLM 补全人物详细信息
-    const prompt = this.buildPersonPrompt(fullText, Array.from(personNames))
+    const prompt = this.buildPersonPrompt(fullText, namesList)
     try {
       const result = await this.llm.callJSON<{
         persons: ExtractedPerson[]
       }>(prompt, this.personSystemPrompt())
 
-      return result.persons || []
-    } catch (err) {
-      console.error('[LLMExtractor] 人物信息提取错误:', err)
+      const duration = Date.now() - startTime
+      const persons = result.persons || []
+      
+      // 记录提取结果
+      logger.info('Person extraction completed', {
+        inputNames: namesList.length,
+        outputPersons: persons.length,
+        personNames: persons.map(p => p.name).slice(0, 10),
+        aliasesTotal: persons.reduce((sum, p) => sum + (p.aliases?.length || 0), 0),
+        duration,
+      })
+      
+      // 检查是否有去重（输出人数少于输入人名数）
+      if (persons.length < namesList.length) {
+        logger.info('Person deduplication detected', {
+          inputCount: namesList.length,
+          outputCount: persons.length,
+          deduplicated: namesList.length - persons.length,
+        })
+      }
+
+      return persons
+    } catch (err: any) {
+      const duration = Date.now() - startTime
+      logger.error('Person extraction failed', {
+        error: err.message,
+        personCount: personNames.size,
+        duration,
+        stack: err.stack?.split('\n').slice(0, 3).join(' '),
+      })
       // 如果失败，返回基础信息
+      logger.warn('Returning basic person info as fallback', { count: personNames.size })
       return Array.from(personNames).map(name => ({
         name,
         aliases: [],
@@ -308,6 +467,28 @@ ${text}
   private buildPersonPrompt(text: string, personNames: string[]): string {
     return `你是历史人物研究专家。请根据以下文本，为这些人物补全详细信息。
 
+## 重要：人物去重与别名识别
+
+**注意**：以下名称列表中可能有多个名称指向同一个人（如"高祖"、"沛公"、"刘邦"都是刘邦）。
+
+**命名规则（必须遵守）**：
+- name 字段必须使用人物的**本名**（出生时的姓名），而非封号、谥号或庙号
+- 其他所有称呼（字、号、封号、谥号、庙号等）都放入 aliases 数组
+- **不要为同一个人创建多条记录**
+
+**示例**：
+如果输入名称包含 ["高祖", "沛公", "汉王", "刘邦"]，应该只输出一条记录：
+{
+  "name": "刘邦",           // ✓ 本名
+  "aliases": ["高祖", "沛公", "汉王", "刘季", "高皇帝"],  // 所有其他称呼
+  ...
+}
+
+**错误示例**（不要这样做）：
+- 为"高祖"单独创建一条记录 ✗
+- 为"沛公"单独创建一条记录 ✗
+- name 使用"高祖"而非"刘邦" ✗
+
 ## 需要补全信息的人物列表
 
 ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
@@ -317,8 +498,8 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
 {
   "persons": [
     {
-      "name": "人物姓名",
-      "aliases": ["别名/字号/封号"],
+      "name": "人物本名（不是封号/谥号）",
+      "aliases": ["字", "号", "封号", "谥号", "其他称呼"],
       "role": "MONARCH|ADVISOR|GENERAL|CIVIL_OFFICIAL|MILITARY_OFFICIAL|RELATIVE|EUNUCH|OTHER",
       "faction": "HAN|CHU|NEUTRAL|OTHER",
       "biography": "人物简介（200-400字，基于文本内容）",
@@ -334,7 +515,7 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
   "persons": [
     {
       "name": "刘邦",
-      "aliases": ["高祖", "沛公", "汉王"],
+      "aliases": ["高祖", "沛公", "汉王", "刘季", "高皇帝"],
       "role": "MONARCH",
       "faction": "HAN",
       "biography": "汉朝开国皇帝，出身沛县平民，早年任亭长。秦末起义，先入关中，约法三章得民心。楚汉之争中，善用人才，以张良、萧何、韩信为核心，最终击败项羽，统一天下，建立汉朝。",
@@ -342,8 +523,8 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
       "deathYear": "前195年"
     },
     {
-      "name": "项羽",
-      "aliases": ["西楚霸王", "项籍"],
+      "name": "项籍",
+      "aliases": ["项羽", "西楚霸王"],
       "role": "MONARCH",
       "faction": "CHU",
       "biography": "秦末起义领袖，楚国贵族后裔。力能扛鼎，勇冠三军。巨鹿之战破釜沉舟大败秦军，威震天下。分封诸侯自立为西楚霸王。楚汉之争中因刚愎自用，不善用人，最终败于垓下，乌江自刎。",
@@ -355,7 +536,9 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
 
 ## 补全要求
 
-1. **角色分类**：
+1. **人物去重**：识别指向同一人的不同名称，合并为一条记录
+2. **本名优先**：name 字段使用本名，其他称呼放入 aliases
+3. **角色分类**：
    - MONARCH: 君主/帝王
    - ADVISOR: 谋士/策士
    - GENERAL: 将领/武将
@@ -364,16 +547,14 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
    - RELATIVE: 外戚/皇亲
    - EUNUCH: 宦官
    - OTHER: 其他
-
-2. **阵营分类**（根据文本时代背景）：
+4. **阵营分类**（根据文本时代背景）：
    - HAN: 汉方/刘邦阵营
    - CHU: 楚方/项羽阵营
    - NEUTRAL: 中立
    - OTHER: 其他
-
-3. **信息来源**：biography 应基于文本内容，不要杜撰
-4. **年份格式**：使用"前XXX年"格式
-5. **只输出 JSON**，不要其他说明文字
+5. **信息来源**：biography 应基于文本内容，不要杜撰
+6. **年份格式**：使用"前XXX年"格式
+7. **只输出 JSON**，不要其他说明文字
 
 ## 参考文本
 

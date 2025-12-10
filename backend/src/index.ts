@@ -5,9 +5,12 @@ import session from 'express-session'
 import connectPgSimple from 'connect-pg-simple'
 import path from 'path'
 import { Pool } from 'pg'
+import { createLogger, generateRequestId } from './lib/logger'
 
 // 加载项目根目录的 .env 文件
 dotenv.config({ path: path.resolve(__dirname, '../../.env') })
+
+const logger = createLogger('http')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -66,17 +69,48 @@ app.use(
   })
 )
 
-// 全局请求日志中间件（用于调试）
-app.use((req, res, next) => {
-  if (req.path.includes('/extract')) {
-    const session = req.session as any
-    console.log('========================================')
-    console.log('[app] Incoming request:', req.method, req.path)
-    console.log('[app] Body:', JSON.stringify(req.body, null, 2))
-    console.log('[app] Session:', session?.adminId ? 'authenticated' : 'not authenticated')
-    console.log('[app] Timestamp:', new Date().toISOString())
-    console.log('========================================')
+// 扩展 Express Request 类型以包含 requestId
+declare global {
+  namespace Express {
+    interface Request {
+      requestId?: string
+      startTime?: number
+    }
   }
+}
+
+// 全局请求日志中间件
+app.use((req, res, next) => {
+  // 生成请求 ID 并记录开始时间
+  req.requestId = generateRequestId()
+  req.startTime = Date.now()
+
+  // 跳过健康检查和静态资源的日志
+  const skipLog = req.path === '/api/health' || req.path.startsWith('/static')
+  
+  if (!skipLog) {
+    const session = req.session as any
+    logger.info(`${req.method} ${req.path}`, {
+      requestId: req.requestId,
+      query: Object.keys(req.query).length > 0 ? req.query : undefined,
+      hasBody: req.body && Object.keys(req.body).length > 0,
+      authenticated: !!session?.adminId,
+    })
+  }
+
+  // 响应完成时记录
+  res.on('finish', () => {
+    if (!skipLog) {
+      const duration = Date.now() - (req.startTime || 0)
+      const logMethod = res.statusCode >= 400 ? 'warn' : 'info'
+      logger[logMethod](`${req.method} ${req.path} ${res.statusCode}`, {
+        requestId: req.requestId,
+        duration,
+        statusCode: res.statusCode,
+      })
+    }
+  })
+
   next()
 })
 
@@ -110,11 +144,16 @@ app.use('/api/admin/chapters', chaptersRouter)
 
 import personsRouter from './routes/persons'
 app.use('/api/admin/persons', personsRouter)
-app.use('/api/persons', personsRouter) // 公开 API（关系推断等）
 
 import eventsRouter from './routes/events'
 app.use('/api/admin/events', eventsRouter)
-app.use('/api/events', eventsRouter) // 公开 API（事件列表等）
+
+// Public API routes (no authentication required)
+import publicPersonsRouter from './routes/public/persons'
+app.use('/api/persons', publicPersonsRouter)
+
+import publicEventsRouter from './routes/public/events'
+app.use('/api/events', publicEventsRouter)
 
 // Change log routes
 import changelogRouter from './routes/changelog'
@@ -122,6 +161,6 @@ app.use('/api/admin/changelog', changelogRouter)
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`)
+  logger.info(`Server started`, { port: PORT, env: process.env.NODE_ENV || 'development' })
 })
 

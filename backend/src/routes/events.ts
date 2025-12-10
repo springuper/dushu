@@ -6,8 +6,10 @@ import express from 'express'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { logChange } from '../lib/changeLog'
+import { createLogger } from '../lib/logger'
 
 const router = express.Router()
+const logger = createLogger('events')
 
 // 事件类型映射
 function mapEventType(type: string | undefined | null): 'BATTLE' | 'POLITICAL' | 'PERSONAL' | 'OTHER' {
@@ -81,17 +83,16 @@ router.get('/', requireAuth, async (req, res) => {
       pageSize: Number(pageSize),
       totalPages: Math.ceil(total / Number(pageSize)),
     })
-  } catch (error) {
-    console.error('Get events error:', error)
+  } catch (error: any) {
+    logger.error('Get events error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 获取事件详情
 router.get('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const event = await prisma.event.findUnique({
       where: { id },
       include: {
@@ -115,8 +116,8 @@ router.get('/:id', requireAuth, async (req, res) => {
     }
 
     res.json(event)
-  } catch (error) {
-    console.error('Get event error:', error)
+  } catch (error: any) {
+    logger.error('Get event error', { eventId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -164,17 +165,18 @@ router.post('/', requireAuth, async (req, res) => {
       changeReason: '手动创建',
     })
 
+    logger.info('Event created', { eventId: event.id, name: event.name, chapterId: event.chapterId })
     res.json(event)
-  } catch (error) {
-    console.error('Create event error:', error)
+  } catch (error: any) {
+    logger.error('Create event error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 更新事件
 router.put('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const data = req.body
 
     const previousEvent = await prisma.event.findUnique({ where: { id } })
@@ -212,18 +214,18 @@ router.put('/:id', requireAuth, async (req, res) => {
       changeReason: '手动更新',
     })
 
+    logger.info('Event updated', { eventId: id })
     res.json(event)
-  } catch (error) {
-    console.error('Update event error:', error)
+  } catch (error: any) {
+    logger.error('Update event error', { eventId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 删除事件
 router.delete('/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const event = await prisma.event.findUnique({ where: { id } })
     if (!event) {
       return res.status(404).json({ error: 'Event not found' })
@@ -244,9 +246,10 @@ router.delete('/:id', requireAuth, async (req, res) => {
       changeReason: '手动删除',
     })
 
+    logger.info('Event deleted', { eventId: id })
     res.json({ success: true })
-  } catch (error) {
-    console.error('Delete event error:', error)
+  } catch (error: any) {
+    logger.error('Delete event error', { eventId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -269,26 +272,26 @@ router.post('/batch/status', requireAuth, async (req, res) => {
       data: { status },
     })
 
+    logger.info('Events batch status updated', { count: result.count, status })
     res.json({ success: true, count: result.count })
-  } catch (error) {
-    console.error('Batch update status error:', error)
+  } catch (error: any) {
+    logger.error('Batch update status error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 按章节获取事件
 router.get('/by-chapter/:chapterId', requireAuth, async (req, res) => {
+  const { chapterId } = req.params
   try {
-    const { chapterId } = req.params
-
     const events = await prisma.event.findMany({
       where: { chapterId },
       orderBy: { timeRangeStart: 'asc' },
     })
 
     res.json(events)
-  } catch (error) {
-    console.error('Get events by chapter error:', error)
+  } catch (error: any) {
+    logger.error('Get events by chapter error', { chapterId, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })

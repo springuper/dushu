@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """
-LLM 批量提取脚本
+⚠️ 已弃用 / DEPRECATED ⚠️
+
+此脚本使用旧的数据格式（包含 relationship 和 place 类型）。
+现在推荐使用管理后台的"章节处理"功能进行数据提取。
+
+后端已实现新的事件中心提取器：backend/src/lib/llmExtractor.ts
+新架构只提取 EVENT 和 PERSON 两种类型，关系从事件中推断，地点内嵌在事件中。
+
+如需使用此脚本，请注意数据格式可能与新系统不兼容。
+
+---
+
+LLM 批量提取脚本（旧版）
 从历史文本中提取人物、关系、地点、事件数据
 
 支持 OpenAI 和 Google Gemini API

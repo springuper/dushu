@@ -26,7 +26,8 @@ import {
   Tabs,
 } from '@mantine/core'
 import { api } from '../../lib/api'
-import { IconEdit, IconTrash, IconPlus, IconEye } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconPlus, IconEye, IconUserSearch, IconArrowMerge } from '@tabler/icons-react'
+import { notifications } from '@mantine/notifications'
 
 // 角色选项
 const roleOptions = [
@@ -82,6 +83,7 @@ function PersonsPage() {
   const [editModal, setEditModal] = useState<string | null>(null)
   const [detailModal, setDetailModal] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [duplicatesModal, setDuplicatesModal] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['persons', { search, status, faction, page }],
@@ -155,12 +157,21 @@ function PersonsPage() {
     <Container size="xl" py="xl">
       <Group justify="space-between" mb="xl">
         <Title order={2}>人物管理</Title>
-        <Button
-          leftSection={<IconPlus size={16} />}
-          onClick={() => setEditModal('new')}
-        >
-          新建人物
-        </Button>
+        <Group>
+          <Button
+            variant="light"
+            leftSection={<IconUserSearch size={16} />}
+            onClick={() => setDuplicatesModal(true)}
+          >
+            检测重复
+          </Button>
+          <Button
+            leftSection={<IconPlus size={16} />}
+            onClick={() => setEditModal('new')}
+          >
+            新建人物
+          </Button>
+        </Group>
       </Group>
 
       {/* 筛选器 */}
@@ -350,6 +361,12 @@ function PersonsPage() {
       <PersonDetailModal
         personId={detailModal}
         onClose={() => setDetailModal(null)}
+      />
+
+      {/* 重复检测 Modal */}
+      <DuplicatesModal
+        opened={duplicatesModal}
+        onClose={() => setDuplicatesModal(false)}
       />
     </Container>
   )
@@ -617,6 +634,172 @@ function PersonDetailModal({ personId, onClose }: { personId: string | null; onC
           </Tabs.Panel>
         </Tabs>
       ) : null}
+    </Modal>
+  )
+}
+
+// 重复检测和合并 Modal
+function DuplicatesModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+  const [selectedGroup, setSelectedGroup] = useState<number | null>(null)
+  const [targetId, setTargetId] = useState<string | null>(null)
+
+  const queryClient = useQueryClient()
+
+  const { data: duplicates, isLoading, refetch } = useQuery({
+    queryKey: ['person-duplicates'],
+    queryFn: async () => {
+      const response = await api.get('/api/admin/persons/duplicates')
+      return response.data
+    },
+    enabled: opened,
+  })
+
+  const mergeMutation = useMutation({
+    mutationFn: async ({ sourceIds, targetId }: { sourceIds: string[]; targetId: string }) => {
+      const response = await api.post('/api/admin/persons/merge', { sourceIds, targetId })
+      return response.data
+    },
+    onSuccess: (data) => {
+      notifications.show({
+        title: '合并成功',
+        message: `已将 ${data.deletedCount} 个人物合并，更新了 ${data.updatedEventCount} 个事件`,
+        color: 'green',
+      })
+      queryClient.invalidateQueries({ queryKey: ['persons'] })
+      queryClient.invalidateQueries({ queryKey: ['person-duplicates'] })
+      setSelectedGroup(null)
+      setTargetId(null)
+      refetch()
+    },
+    onError: (error: any) => {
+      notifications.show({
+        title: '合并失败',
+        message: error.response?.data?.error || '未知错误',
+        color: 'red',
+      })
+    },
+  })
+
+  const handleMerge = () => {
+    if (selectedGroup === null || !targetId) {
+      notifications.show({
+        title: '请选择',
+        message: '请先选择要合并的人物组和目标人物',
+        color: 'yellow',
+      })
+      return
+    }
+
+    const group = duplicates?.groups[selectedGroup]
+    if (!group) return
+
+    const sourceIds = group.persons
+      .map((p: any) => p.id)
+      .filter((id: string) => id !== targetId)
+
+    if (sourceIds.length === 0) {
+      notifications.show({
+        title: '无法合并',
+        message: '请选择除目标人物外的其他人物进行合并',
+        color: 'yellow',
+      })
+      return
+    }
+
+    if (confirm(`确定要将 ${sourceIds.length} 个人物合并到目标人物吗？此操作不可撤销。`)) {
+      mergeMutation.mutate({ sourceIds, targetId })
+    }
+  }
+
+  return (
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="检测重复人物"
+      size="xl"
+    >
+      {isLoading ? (
+        <Text ta="center" py="xl">检测中...</Text>
+      ) : duplicates?.count === 0 ? (
+        <Text ta="center" py="xl" c="dimmed">未检测到重复人物</Text>
+      ) : (
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            检测到 {duplicates?.count} 组潜在重复的人物。选择一组后，指定目标人物进行合并。
+          </Text>
+
+          {duplicates?.groups.map((group: any, index: number) => (
+            <Paper
+              key={index}
+              p="md"
+              withBorder
+              style={{
+                cursor: 'pointer',
+                borderColor: selectedGroup === index ? 'var(--mantine-color-blue-5)' : undefined,
+                backgroundColor: selectedGroup === index ? 'var(--mantine-color-blue-0)' : undefined,
+              }}
+              onClick={() => {
+                setSelectedGroup(index)
+                setTargetId(null)
+              }}
+            >
+              <Group justify="space-between" mb="xs">
+                <Badge size="sm" variant="light">
+                  匹配名称: {group.matchedName}
+                </Badge>
+                <Text size="xs" c="dimmed">{group.persons.length} 个人物</Text>
+              </Group>
+              
+              <Stack gap="xs">
+                {group.persons.map((person: any) => (
+                  <Group key={person.id} justify="space-between">
+                    <Group gap="xs">
+                      {selectedGroup === index && (
+                        <Checkbox
+                          checked={targetId === person.id}
+                          onChange={() => setTargetId(person.id)}
+                          label=""
+                          size="xs"
+                        />
+                      )}
+                      <div>
+                        <Text size="sm" fw={500}>{person.name}</Text>
+                        <Text size="xs" c="dimmed">
+                          别名: {person.aliases?.join(', ') || '无'}
+                        </Text>
+                      </div>
+                    </Group>
+                    <Group gap="xs">
+                      <Badge size="xs" variant="light">
+                        {roleMap[person.role] || person.role}
+                      </Badge>
+                      <Badge size="xs" variant="light" color={person.faction === 'HAN' ? 'red' : person.faction === 'CHU' ? 'blue' : 'gray'}>
+                        {factionMap[person.faction] || person.faction}
+                      </Badge>
+                    </Group>
+                  </Group>
+                ))}
+              </Stack>
+            </Paper>
+          ))}
+
+          {selectedGroup !== null && (
+            <Group justify="flex-end">
+              <Text size="sm" c="dimmed">
+                {targetId ? `将合并到: ${duplicates?.groups[selectedGroup]?.persons.find((p: any) => p.id === targetId)?.name}` : '请选择目标人物（勾选框）'}
+              </Text>
+              <Button
+                leftSection={<IconArrowMerge size={16} />}
+                onClick={handleMerge}
+                loading={mergeMutation.isPending}
+                disabled={!targetId}
+              >
+                合并到选中人物
+              </Button>
+            </Group>
+          )}
+        </Stack>
+      )}
     </Modal>
   )
 }

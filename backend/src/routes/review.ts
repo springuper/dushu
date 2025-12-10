@@ -8,8 +8,10 @@ import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { logChange } from '../lib/changeLog'
 import { PersonRole, Faction, EventType, TimePrecision } from '@prisma/client'
+import { createLogger } from '../lib/logger'
 
 const router = express.Router()
+const logger = createLogger('review')
 
 // 角色映射
 function mapRole(role: string | undefined | null): PersonRole {
@@ -75,6 +77,57 @@ function mapTimePrecision(precision: string | undefined | null): TimePrecision {
   return map[normalized] || 'YEAR'
 }
 
+/**
+ * 查找已存在的人物（通过名称或别名匹配）
+ * 用于审核通过时检测重复，避免创建重复人物
+ */
+async function findExistingPerson(name: string, aliases: string[] = []) {
+  const allNames = [name, ...aliases].filter(Boolean)
+  if (allNames.length === 0) return null
+
+  return prisma.person.findFirst({
+    where: {
+      OR: [
+        // 名称匹配
+        { name: { in: allNames } },
+        // 别名匹配
+        { aliases: { hasSome: allNames } },
+      ],
+    },
+  })
+}
+
+/**
+ * 合并人物别名（去重）
+ */
+function mergeAliases(existingAliases: string[], newName: string, newAliases: string[]): string[] {
+  const allAliases = new Set([...existingAliases, ...newAliases])
+  // 如果新名称不是已有人物的主名称，也加入别名
+  allAliases.add(newName)
+  return Array.from(allAliases).filter(Boolean)
+}
+
+/**
+ * 合并人物简介
+ */
+function mergeBiography(existingBio: string, newBio: string): string {
+  if (!newBio || newBio.startsWith('（') || newBio.length < 20) {
+    return existingBio
+  }
+  if (!existingBio || existingBio.startsWith('（') || existingBio.length < 20) {
+    return newBio
+  }
+  // 如果两者都有内容，保留更长的那个
+  return newBio.length > existingBio.length ? newBio : existingBio
+}
+
+/**
+ * 合并来源章节 ID
+ */
+function mergeSourceChapterIds(existing: string[], newIds: string[]): string[] {
+  return Array.from(new Set([...existing, ...newIds]))
+}
+
 // 获取 Review 列表
 router.get('/items', requireAuth, async (req, res) => {
   try {
@@ -105,17 +158,16 @@ router.get('/items', requireAuth, async (req, res) => {
       pageSize: Number(pageSize),
       totalPages: Math.ceil(total / Number(pageSize)),
     })
-  } catch (error) {
-    console.error('Get review items error:', error)
+  } catch (error: any) {
+    logger.error('Get review items error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 获取 Review 详情
 router.get('/items/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
-
     const item = await prisma.reviewItem.findUnique({
       where: { id },
     })
@@ -125,16 +177,16 @@ router.get('/items/:id', requireAuth, async (req, res) => {
     }
 
     res.json(item)
-  } catch (error) {
-    console.error('Get review item error:', error)
+  } catch (error: any) {
+    logger.error('Get review item error', { itemId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 通过审核
 router.post('/items/:id/approve', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const { notes } = req.body
     
     const item = await prisma.reviewItem.findUnique({
@@ -154,15 +206,87 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
         return res.status(400).json({ error: '人物姓名不能为空' })
       }
       
+      const personName = newData.name.trim()
+      const personAliases = newData.aliases || []
+      
+      // 检查是否已存在同名或别名匹配的人物
+      const existingPerson = await findExistingPerson(personName, personAliases)
+      
+      if (existingPerson) {
+        // 合并到已有人物
+        const mergedAliases = mergeAliases(existingPerson.aliases, personName, personAliases)
+        // 从别名中移除主名称
+        const finalAliases = mergedAliases.filter(a => a !== existingPerson.name)
+        
+        const biography = mergeBiography(
+          existingPerson.biography,
+          newData.biography?.trim() || ''
+        )
+        
+        const sourceChapterIds = mergeSourceChapterIds(
+          existingPerson.sourceChapterIds,
+          newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : [])
+        )
+        
+        const previousData = { ...existingPerson }
+        
+        const updatedPerson = await prisma.person.update({
+          where: { id: existingPerson.id },
+          data: {
+            aliases: finalAliases,
+            biography,
+            sourceChapterIds,
+            // 只在现有数据为空时更新其他字段
+            birthYear: existingPerson.birthYear || newData.birthYear || null,
+            deathYear: existingPerson.deathYear || newData.deathYear || null,
+          },
+        })
+        
+        // 记录合并日志
+        await logChange({
+          entityType: 'PERSON',
+          entityId: existingPerson.id,
+          action: 'MERGE',
+          previousData,
+          currentData: updatedPerson,
+          changedBy: adminId,
+          changeReason: notes || `合并自 ReviewItem: ${personName}`,
+        })
+        
+        // 更新 ReviewItem
+        const updatedItem = await prisma.reviewItem.update({
+          where: { id },
+          data: {
+            status: 'APPROVED',
+            reviewerNotes: `已合并到已有人物: ${existingPerson.name}`,
+            reviewedBy: adminId,
+            reviewedAt: new Date(),
+          },
+        })
+        
+        logger.info('Review approved - person merged', {
+          reviewId: id,
+          personId: existingPerson.id,
+          personName: existingPerson.name,
+          mergedName: personName,
+        })
+        
+        return res.json({
+          ...updatedItem,
+          merged: true,
+          mergedPerson: updatedPerson,
+        })
+      }
+      
       // 为 biography 提供默认值
       const biography = (newData.biography && newData.biography.trim()) 
         ? newData.biography.trim() 
-        : `（${newData.name}，暂无详细简介）`
+        : `（${personName}，暂无详细简介）`
       
       const newPerson = await prisma.person.create({
         data: {
-          name: newData.name.trim(),
-          aliases: newData.aliases || [],
+          name: personName,
+          aliases: personAliases,
           role: mapRole(newData.role),
           faction: mapFaction(newData.faction),
           birthYear: newData.birthYear || null,
@@ -193,6 +317,12 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
           reviewedBy: adminId,
           reviewedAt: new Date(),
         },
+      })
+
+      logger.info('Review approved - person created', {
+        reviewId: id,
+        personId: newPerson.id,
+        personName: newPerson.name,
       })
 
       return res.json({
@@ -254,6 +384,12 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
         },
       })
 
+      logger.info('Review approved - event created', {
+        reviewId: id,
+        eventId: createdEvent.id,
+        eventName: createdEvent.name,
+      })
+
       return res.json({
         ...updatedItem,
         createdEvent,
@@ -272,16 +408,16 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
     })
 
     res.json(updatedItem)
-  } catch (error) {
-    console.error('[review] approve error', { id: req.params?.id, error })
+  } catch (error: any) {
+    logger.error('Review approve error', { reviewId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 拒绝审核
 router.post('/items/:id/reject', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const { notes } = req.body
 
     const item = await prisma.reviewItem.update({
@@ -294,17 +430,18 @@ router.post('/items/:id/reject', requireAuth, async (req, res) => {
       },
     })
 
+    logger.info('Review rejected', { reviewId: id, type: item.type })
     res.json(item)
-  } catch (error) {
-    console.error('Reject review item error:', error)
+  } catch (error: any) {
+    logger.error('Reject review item error', { reviewId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 保存修改
 router.post('/items/:id/update', requireAuth, async (req, res) => {
+  const { id } = req.params
   try {
-    const { id } = req.params
     const { modifiedData, notes } = req.body
 
     const item = await prisma.reviewItem.update({
@@ -318,9 +455,10 @@ router.post('/items/:id/update', requireAuth, async (req, res) => {
       },
     })
 
+    logger.info('Review item modified', { reviewId: id, type: item.type })
     res.json(item)
-  } catch (error) {
-    console.error('Update review item error:', error)
+  } catch (error: any) {
+    logger.error('Update review item error', { reviewId: id, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -359,45 +497,102 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
             continue
           }
 
-          const biography = (newData.biography && newData.biography.trim()) 
-            ? newData.biography.trim() 
-            : `（${newData.name}，暂无详细简介）`
+          const personName = newData.name.trim()
+          const personAliases = newData.aliases || []
+          
+          // 检查是否已存在同名或别名匹配的人物
+          const existingPerson = await findExistingPerson(personName, personAliases)
+          
+          if (existingPerson) {
+            // 合并到已有人物
+            const mergedAliases = mergeAliases(existingPerson.aliases, personName, personAliases)
+            const finalAliases = mergedAliases.filter(a => a !== existingPerson.name)
+            
+            const biography = mergeBiography(
+              existingPerson.biography,
+              newData.biography?.trim() || ''
+            )
+            
+            const sourceChapterIds = mergeSourceChapterIds(
+              existingPerson.sourceChapterIds,
+              newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : [])
+            )
+            
+            const previousData = { ...existingPerson }
+            
+            const updatedPerson = await prisma.person.update({
+              where: { id: existingPerson.id },
+              data: {
+                aliases: finalAliases,
+                biography,
+                sourceChapterIds,
+                birthYear: existingPerson.birthYear || newData.birthYear || null,
+                deathYear: existingPerson.deathYear || newData.deathYear || null,
+              },
+            })
+            
+            await logChange({
+              entityType: 'PERSON',
+              entityId: existingPerson.id,
+              action: 'MERGE',
+              previousData,
+              currentData: updatedPerson,
+              changedBy: adminId,
+              changeReason: notes || `批量合并自 ReviewItem: ${personName}`,
+            })
+            
+            await prisma.reviewItem.update({
+              where: { id },
+              data: {
+                status: 'APPROVED',
+                reviewerNotes: `已合并到已有人物: ${existingPerson.name}`,
+                reviewedBy: adminId,
+                reviewedAt: new Date(),
+              },
+            })
+            
+            successCount++
+          } else {
+            const biography = (newData.biography && newData.biography.trim()) 
+              ? newData.biography.trim() 
+              : `（${personName}，暂无详细简介）`
 
-          const newPerson = await prisma.person.create({
-            data: {
-              name: newData.name.trim(),
-              aliases: newData.aliases || [],
-              role: mapRole(newData.role),
-              faction: mapFaction(newData.faction),
-              birthYear: newData.birthYear || null,
-              deathYear: newData.deathYear || null,
-              biography: biography,
-              portraitUrl: newData.portraitUrl || null,
-              sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
-              status: 'PUBLISHED',
-            },
-          })
+            const newPerson = await prisma.person.create({
+              data: {
+                name: personName,
+                aliases: personAliases,
+                role: mapRole(newData.role),
+                faction: mapFaction(newData.faction),
+                birthYear: newData.birthYear || null,
+                deathYear: newData.deathYear || null,
+                biography: biography,
+                portraitUrl: newData.portraitUrl || null,
+                sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+                status: 'PUBLISHED',
+              },
+            })
 
-          await logChange({
-            entityType: 'PERSON',
-            entityId: newPerson.id,
-            action: 'CREATE',
-            currentData: newPerson,
-            changedBy: adminId,
-            changeReason: notes || '从 ReviewItem 批量创建',
-          })
+            await logChange({
+              entityType: 'PERSON',
+              entityId: newPerson.id,
+              action: 'CREATE',
+              currentData: newPerson,
+              changedBy: adminId,
+              changeReason: notes || '从 ReviewItem 批量创建',
+            })
 
-          await prisma.reviewItem.update({
-            where: { id },
-            data: {
-              status: 'APPROVED',
-              reviewerNotes: notes,
-              reviewedBy: adminId,
-              reviewedAt: new Date(),
-            },
-          })
+            await prisma.reviewItem.update({
+              where: { id },
+              data: {
+                status: 'APPROVED',
+                reviewerNotes: notes,
+                reviewedBy: adminId,
+                reviewedAt: new Date(),
+              },
+            })
 
-          successCount++
+            successCount++
+          }
         } else if (item.type === 'EVENT') {
           if (!newData.name || !newData.name.trim()) {
             errors.push({ id, error: '事件名称不能为空' })
@@ -473,14 +668,15 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
       }
     }
 
+    logger.info('Batch approve completed', { successCount, errorCount, total: ids.length })
     res.json({
       success: true,
       successCount,
       errorCount,
       errors: errors.slice(0, 10),
     })
-  } catch (error) {
-    console.error('Batch approve error:', error)
+  } catch (error: any) {
+    logger.error('Batch approve error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -507,18 +703,18 @@ router.post('/batch-reject', requireAuth, async (req, res) => {
       },
     })
 
+    logger.info('Batch reject completed', { count: result.count })
     res.json({ success: true, count: result.count })
-  } catch (error) {
-    console.error('Batch reject error:', error)
+  } catch (error: any) {
+    logger.error('Batch reject error', { error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 // 批量操作（兼容旧接口）
 router.post('/items/batch', requireAuth, async (req, res) => {
+  const { ids, action, notes } = req.body
   try {
-    const { ids, action, notes } = req.body
-
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Invalid ids' })
     }
@@ -547,35 +743,79 @@ router.post('/items/batch', requireAuth, async (req, res) => {
               continue
             }
 
-            const biography = (newData.biography && newData.biography.trim()) 
-              ? newData.biography.trim() 
-              : `（${newData.name}，暂无详细简介）`
+            const personName = newData.name.trim()
+            const personAliases = newData.aliases || []
+            
+            // 检查是否已存在同名或别名匹配的人物
+            const existingPerson = await findExistingPerson(personName, personAliases)
+            
+            if (existingPerson) {
+              // 合并到已有人物
+              const mergedAliases = mergeAliases(existingPerson.aliases, personName, personAliases)
+              const finalAliases = mergedAliases.filter(a => a !== existingPerson.name)
+              
+              const biography = mergeBiography(
+                existingPerson.biography,
+                newData.biography?.trim() || ''
+              )
+              
+              const sourceChapterIds = mergeSourceChapterIds(
+                existingPerson.sourceChapterIds,
+                newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : [])
+              )
+              
+              await prisma.person.update({
+                where: { id: existingPerson.id },
+                data: {
+                  aliases: finalAliases,
+                  biography,
+                  sourceChapterIds,
+                  birthYear: existingPerson.birthYear || newData.birthYear || null,
+                  deathYear: existingPerson.deathYear || newData.deathYear || null,
+                },
+              })
+              
+              await prisma.reviewItem.update({
+                where: { id },
+                data: {
+                  status: 'APPROVED',
+                  reviewerNotes: `已合并到已有人物: ${existingPerson.name}`,
+                  reviewedBy: adminId,
+                  reviewedAt: new Date(),
+                },
+              })
+              successCount++
+            } else {
+              const biography = (newData.biography && newData.biography.trim()) 
+                ? newData.biography.trim() 
+                : `（${personName}，暂无详细简介）`
 
-            await prisma.person.create({
-              data: {
-                name: newData.name.trim(),
-                aliases: newData.aliases || [],
-                role: mapRole(newData.role),
-                faction: mapFaction(newData.faction),
-                birthYear: newData.birthYear || null,
-                deathYear: newData.deathYear || null,
-                biography: biography,
-                portraitUrl: newData.portraitUrl || null,
-                sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
-                status: 'PUBLISHED',
-              },
-            })
+              await prisma.person.create({
+                data: {
+                  name: personName,
+                  aliases: personAliases,
+                  role: mapRole(newData.role),
+                  faction: mapFaction(newData.faction),
+                  birthYear: newData.birthYear || null,
+                  deathYear: newData.deathYear || null,
+                  biography: biography,
+                  portraitUrl: newData.portraitUrl || null,
+                  sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+                  status: 'PUBLISHED',
+                },
+              })
 
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: notes,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-            successCount++
+              await prisma.reviewItem.update({
+                where: { id },
+                data: {
+                  status: 'APPROVED',
+                  reviewerNotes: notes,
+                  reviewedBy: adminId,
+                  reviewedAt: new Date(),
+                },
+              })
+              successCount++
+            }
           } else if (item.type === 'EVENT') {
             if (!newData.name || !newData.name.trim()) {
               errors.push({ id, error: '事件名称不能为空' })
@@ -661,8 +901,8 @@ router.post('/items/batch', requireAuth, async (req, res) => {
     } else {
       return res.status(400).json({ error: 'Invalid action' })
     }
-  } catch (error) {
-    console.error('Batch operation error:', error)
+  } catch (error: any) {
+    logger.error('Batch operation error', { action, error: error.message })
     res.status(500).json({ error: 'Internal server error' })
   }
 })
