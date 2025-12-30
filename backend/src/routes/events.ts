@@ -7,6 +7,7 @@ import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { logChange } from '../lib/changeLog'
 import { createLogger } from '../lib/logger'
+import { sortEventsByTime } from '../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('events')
@@ -284,10 +285,12 @@ router.post('/batch/status', requireAuth, async (req, res) => {
 router.get('/by-chapter/:chapterId', requireAuth, async (req, res) => {
   const { chapterId } = req.params
   try {
-    const events = await prisma.event.findMany({
+    const rawEvents = await prisma.event.findMany({
       where: { chapterId },
-      orderBy: { timeRangeStart: 'asc' },
     })
+
+    // 按时间正确排序（处理公元前日期和多种格式）
+    const events = sortEventsByTime(rawEvents)
 
     res.json(events)
   } catch (error: any) {

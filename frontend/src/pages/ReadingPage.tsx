@@ -18,6 +18,7 @@ import {
   Tooltip,
   HoverCard,
   Badge,
+  ScrollArea,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import * as OpenCC from 'opencc-js'
@@ -463,10 +464,13 @@ function ReadingPage() {
             withBorder
             style={{
               height: '100%',
-              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               backgroundColor: 'white',
             }}
           >
+            <ScrollArea style={{ flex: 1 }} offsetScrollbars>
               <Stack gap="xl">
                 <div>
                   <Title order={2} mb="sm">
@@ -555,8 +559,9 @@ function ReadingPage() {
                   </Stack>
                 )}
               </Stack>
-            </Card>
-          </Box>
+            </ScrollArea>
+          </Card>
+        </Box>
 
           {/* 信息面板 */}
           {showInfoPanel && (

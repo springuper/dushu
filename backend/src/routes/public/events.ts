@@ -5,50 +5,10 @@
 import express from 'express'
 import { prisma } from '../../lib/prisma'
 import { createLogger } from '../../lib/logger'
+import { sortEventsByTime } from '../../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('public-events')
-
-/**
- * 解析中文日期字符串为可排序的数值
- * 公元前用负数表示，公元后用正数
- * 例如："前206年" -> -206, "25年" -> 25, "前206年12月" -> -206.01
- */
-function parseChineseDate(dateStr: string): number {
-  if (!dateStr) return 0
-  
-  const isBCE = dateStr.startsWith('前')
-  const cleanStr = isBCE ? dateStr.substring(1) : dateStr
-  
-  // 提取年份
-  const yearMatch = cleanStr.match(/(\d+)年/)
-  if (!yearMatch) return 0
-  
-  let year = parseInt(yearMatch[1], 10)
-  
-  // 提取月份作为小数部分（用于更精确排序）
-  const monthMatch = cleanStr.match(/(\d+)月/)
-  const month = monthMatch ? parseInt(monthMatch[1], 10) / 100 : 0
-  
-  // 公元前用负数，但注意：前256年比前206年更早，所以需要取负
-  // -256 < -206，正确表示 前256年 早于 前206年
-  if (isBCE) {
-    return -(year - month) // 月份使得同年内的事件可以正确排序
-  }
-  
-  return year + month
-}
-
-/**
- * 按时间排序事件（处理公元前/后的正确顺序）
- */
-function sortEventsByTime<T extends { timeRangeStart: string }>(events: T[]): T[] {
-  return [...events].sort((a, b) => {
-    const timeA = parseChineseDate(a.timeRangeStart)
-    const timeB = parseChineseDate(b.timeRangeStart)
-    return timeA - timeB
-  })
-}
 
 // 获取事件列表（公开，只返回已发布的事件）
 router.get('/', async (req, res) => {

@@ -6,8 +6,32 @@
 import OpenAI from 'openai'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createLogger } from './logger'
+import * as fs from 'fs'
+import * as path from 'path'
 
 const logger = createLogger('llm')
+
+// 调试文件保存目录
+const DEBUG_DIR = path.join(process.cwd(), 'debug', 'llm-calls')
+
+// 确保调试目录存在
+function ensureDebugDir() {
+  if (!fs.existsSync(DEBUG_DIR)) {
+    fs.mkdirSync(DEBUG_DIR, { recursive: true })
+  }
+}
+
+// 保存调试文件
+function saveDebugFile(filename: string, content: string) {
+  try {
+    ensureDebugDir()
+    const filePath = path.join(DEBUG_DIR, filename)
+    fs.writeFileSync(filePath, content, 'utf-8')
+    logger.debug('Debug file saved', { file: filename })
+  } catch (error: any) {
+    logger.warn('Failed to save debug file', { filename, error: error.message })
+  }
+}
 
 export type LLMProvider = 'openai' | 'gemini' | 'auto'
 
@@ -24,7 +48,10 @@ export class LLMService {
   private model: string
 
   constructor(config: LLMConfig = {}) {
-    const provider = config.provider || this.detectProvider()
+    const envProvider = (process.env.LLM_PROVIDER as LLMProvider | undefined)?.toLowerCase() as
+      | LLMProvider
+      | undefined
+    const provider = config.provider || envProvider || this.detectProvider()
     this.provider = provider === 'auto' ? this.detectProvider() : provider
 
     if (this.provider === 'gemini') {
@@ -33,7 +60,8 @@ export class LLMService {
         throw new Error('需要设置 GOOGLE_API_KEY 环境变量')
       }
       const genAI = new GoogleGenerativeAI(apiKey)
-      this.model = config.model || process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+      const envModel = process.env.LLM_MODEL || process.env.GEMINI_MODEL
+      this.model = config.model || envModel || 'gemini-2.5-flash'
       this.client = genAI.getGenerativeModel({ model: this.model })
       logger.info('LLM service initialized', { provider: 'gemini', model: this.model })
     } else {
@@ -47,7 +75,8 @@ export class LLMService {
         apiKey,
         baseURL,
       })
-      this.model = config.model || process.env.OPENAI_MODEL || 'gpt-4o-mini'
+      const envModel = process.env.LLM_MODEL || process.env.OPENAI_MODEL
+      this.model = config.model || envModel || 'gpt-4o-mini'
       logger.info('LLM service initialized', { provider: 'openai', model: this.model, baseURL })
     }
   }
@@ -65,9 +94,16 @@ export class LLMService {
   /**
    * 调用 LLM
    */
-  async call(prompt: string, systemPrompt?: string, temperature: number = 0.3): Promise<string> {
+  async call(
+    prompt: string, 
+    systemPrompt?: string, 
+    temperature: number = 0.3,
+    callId?: string
+  ): Promise<string> {
     const inputChars = prompt.length + (systemPrompt?.length || 0)
     const timer = logger.startTimer('LLM call')
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const finalCallId = callId || `${timestamp}_${this.provider}_${Date.now()}`
     
     // 请求前日志
     logger.info('LLM request sending', {
@@ -77,7 +113,14 @@ export class LLMService {
       promptPreview: prompt.substring(0, 200).replace(/\n/g, ' ') + (prompt.length > 200 ? '...' : ''),
       hasSystemPrompt: !!systemPrompt,
       temperature,
+      callId: finalCallId,
     })
+
+    // 保存 prompt 到文件
+    const promptContent = systemPrompt 
+      ? `=== SYSTEM PROMPT ===\n${systemPrompt}\n\n=== USER PROMPT ===\n${prompt}`
+      : `=== PROMPT ===\n${prompt}`
+    saveDebugFile(`${finalCallId}_prompt.txt`, promptContent)
 
     try {
       if (this.provider === 'gemini') {
@@ -89,12 +132,16 @@ export class LLMService {
         const result = await this.client.generateContent(fullPrompt)
         const text = result.response.text()
         
+        // 保存 response 到文件
+        saveDebugFile(`${finalCallId}_response.txt`, text)
+        
         // 请求后日志
         logger.info('LLM response received', {
           provider: this.provider,
           inputChars,
           outputChars: text.length,
           responsePreview: text.substring(0, 150).replace(/\n/g, ' ') + (text.length > 150 ? '...' : ''),
+          callId: finalCallId,
         })
         timer.end({ provider: this.provider, inputChars, outputChars: text.length })
         return text
@@ -115,6 +162,9 @@ export class LLMService {
 
         const text = response.choices[0].message.content || ''
         
+        // 保存 response 到文件
+        saveDebugFile(`${finalCallId}_response.txt`, text)
+        
         // 请求后日志
         logger.info('LLM response received', {
           provider: this.provider,
@@ -122,6 +172,7 @@ export class LLMService {
           outputChars: text.length,
           responsePreview: text.substring(0, 150).replace(/\n/g, ' ') + (text.length > 150 ? '...' : ''),
           usage: response.usage,
+          callId: finalCallId,
         })
         timer.end({
           provider: this.provider,
@@ -153,21 +204,35 @@ export class LLMService {
     systemPrompt?: string,
     temperature: number = 0.3
   ): Promise<T> {
-    logger.debug('LLM JSON call started')
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const callId = `${timestamp}_${this.provider}_json_${Date.now()}`
+    logger.debug('LLM JSON call started', { callId })
     
-    const content = await this.call(prompt, systemPrompt, temperature)
+    // 传递 callId 给 call 方法，确保文件名一致
+    const content = await this.call(prompt, systemPrompt, temperature, callId)
     
     // 尝试提取 JSON（可能包含 markdown 代码块）
     let jsonContent = content.trim()
     const hadCodeBlock = jsonContent.startsWith('```')
     if (hadCodeBlock) {
-      const lines = jsonContent.split('\n')
-      jsonContent = lines.slice(1, -1).join('\n')
-      logger.debug('Stripped markdown code block from response')
+      // 更健壮的代码块去除：使用正则匹配整个代码块
+      const codeBlockMatch = jsonContent.match(/^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/)
+      if (codeBlockMatch) {
+        jsonContent = codeBlockMatch[1].trim()
+        logger.debug('Stripped markdown code block from response')
+      } else {
+        // 回退到原来的简单方法
+        const lines = jsonContent.split('\n')
+        jsonContent = lines.slice(1, -1).join('\n')
+        logger.debug('Stripped markdown code block from response (fallback method)')
+      }
     }
 
     try {
       const parsed = JSON.parse(jsonContent)
+      
+      // 保存解析后的 JSON（格式化）
+      saveDebugFile(`${callId}_parsed.json`, JSON.stringify(parsed, null, 2))
       
       // 记录解析成功的关键信息
       const keys = Object.keys(parsed)
@@ -182,15 +247,49 @@ export class LLMService {
         keys,
         ...summary,
         hadCodeBlock,
+        callId,
       })
       
       return parsed
     } catch (error: any) {
+      // 尝试从错误信息中提取位置信息
+      const positionMatch = error.message.match(/position (\d+)/)
+      const position = positionMatch ? parseInt(positionMatch[1], 10) : null
+      
+      let errorContext = ''
+      if (position !== null && position < jsonContent.length) {
+        const start = Math.max(0, position - 100)
+        const end = Math.min(jsonContent.length, position + 100)
+        errorContext = jsonContent.substring(start, end)
+        // 标记错误位置
+        const relativePos = position - start
+        errorContext = 
+          errorContext.substring(0, relativePos) + 
+          ' <<<ERROR_HERE>>> ' + 
+          errorContext.substring(relativePos)
+      }
+      
+      // 保存解析失败的 JSON 内容（用于调试）
+      saveDebugFile(`${callId}_failed_json.txt`, jsonContent)
+      saveDebugFile(`${callId}_error_info.txt`, JSON.stringify({
+        error: error.message,
+        contentLength: content.length,
+        jsonContentLength: jsonContent.length,
+        errorPosition: position,
+        errorContext,
+        hadCodeBlock,
+      }, null, 2))
+      
       logger.error('JSON parse failed', {
         error: error.message,
         contentLength: content.length,
+        jsonContentLength: jsonContent.length,
+        errorPosition: position,
         contentPreview: content.substring(0, 300).replace(/\n/g, ' '),
+        errorContext: errorContext || jsonContent.substring(0, 500).replace(/\n/g, ' '),
         hadCodeBlock,
+        callId,
+        debugFiles: `See debug/llm-calls/${callId}_*.txt for details`,
       })
       throw new Error(`LLM 返回的 JSON 格式错误: ${error}`)
     }

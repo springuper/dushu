@@ -1,7 +1,7 @@
 /**
  * 审核页面（事件中心 MVP 版本）
  * 
- * 只处理 EVENT 和 PERSON 两种类型
+ * 处理 EVENT、PERSON 和 PLACE 三种类型
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -30,6 +30,7 @@ const REVIEW_TYPES = [
   { value: '', label: '全部类型' },
   { value: 'EVENT', label: '事件' },
   { value: 'PERSON', label: '人物' },
+  { value: 'PLACE', label: '地点' },
 ]
 
 const REVIEW_STATUSES = [
@@ -57,6 +58,7 @@ const statusLabels: Record<string, string> = {
 const typeLabels: Record<string, string> = {
   EVENT: '事件',
   PERSON: '人物',
+  PLACE: '地点',
 }
 
 function ReviewPage() {
@@ -200,6 +202,26 @@ function ReviewPage() {
             角色: {data.role} | 阵营: {data.faction}
           </Text>
           <Text size="xs" lineClamp={2}>{data.biography}</Text>
+        </Stack>
+      )
+    }
+    if (item.type === 'PLACE') {
+      return (
+        <Stack gap="xs">
+          <Text size="sm" fw={500}>{data.name}</Text>
+          <Text size="xs" c="dimmed">
+            {data.aliases?.length > 0 && `别名: ${data.aliases.join(', ')} | `}
+            {data.featureType && `类型: ${data.featureType} | `}
+            {data.coordinates && `坐标: ${data.coordinates.lng.toFixed(4)}, ${data.coordinates.lat.toFixed(4)}`}
+          </Text>
+          {data.modernLocation && (
+            <Text size="xs" lineClamp={1} c="dimmed">
+              现代位置: {data.modernLocation}
+            </Text>
+          )}
+          {data.geographicContext && (
+            <Text size="xs" lineClamp={2}>{data.geographicContext}</Text>
+          )}
         </Stack>
       )
     }
@@ -467,7 +489,7 @@ function ReviewDetailModal({
           <Tabs.Panel value="preview" pt="md">
             <Stack gap="md">
               <Group>
-                <Badge color={item.type === 'EVENT' ? 'blue' : 'purple'}>
+                <Badge color={item.type === 'EVENT' ? 'blue' : item.type === 'PERSON' ? 'purple' : 'teal'}>
                   {typeLabels[item.type] || item.type}
                 </Badge>
                 <Badge color={statusColors[item.status] || 'gray'}>
@@ -527,6 +549,54 @@ function ReviewDetailModal({
                   </Group>
                   <Divider label="传记" labelPosition="left" mb="sm" />
                   <Text size="sm">{data.biography}</Text>
+                </Paper>
+              )}
+
+              {item.type === 'PLACE' && data && (
+                <Paper p="md" withBorder>
+                  <Text size="lg" fw={500} mb="xs">{data.name}</Text>
+                  {data.aliases?.length > 0 && (
+                    <Text size="sm" c="dimmed" mb="sm">别名: {data.aliases.join(', ')}</Text>
+                  )}
+                  <Group gap="xs" mb="sm">
+                    {data.featureType && <Badge size="sm">{data.featureType}</Badge>}
+                    {data.source && <Badge size="sm" variant="light">来源: {data.source}</Badge>}
+                    {data.coordinates && (
+                      <Text size="sm" c="dimmed">
+                        坐标: {data.coordinates.lng.toFixed(4)}, {data.coordinates.lat.toFixed(4)}
+                      </Text>
+                    )}
+                  </Group>
+                  {data.modernLocation && (
+                    <>
+                      <Divider label="现代位置" labelPosition="left" mb="sm" />
+                      <Text size="sm">{data.modernLocation}</Text>
+                      {data.modernAddress && (
+                        <Text size="xs" c="dimmed" mt="xs">可搜索地址: {data.modernAddress}</Text>
+                      )}
+                    </>
+                  )}
+                  {(data.adminLevel1 || data.adminLevel2 || data.adminLevel3) && (
+                    <>
+                      <Divider label="历史行政隶属" labelPosition="left" my="sm" />
+                      <Stack gap="xs">
+                        {data.adminLevel1 && <Text size="sm">一级: {data.adminLevel1}</Text>}
+                        {data.adminLevel2 && <Text size="sm">二级: {data.adminLevel2}</Text>}
+                        {data.adminLevel3 && <Text size="sm">三级: {data.adminLevel3}</Text>}
+                      </Stack>
+                    </>
+                  )}
+                  {data.geographicContext && (
+                    <>
+                      <Divider label="地理背景" labelPosition="left" my="sm" />
+                      <Text size="sm">{data.geographicContext}</Text>
+                    </>
+                  )}
+                  {(data.timeRangeBegin || data.timeRangeEnd) && (
+                    <Text size="xs" c="dimmed" mt="sm">
+                      时间范围: {data.timeRangeBegin || '?'} ~ {data.timeRangeEnd || '?'}
+                    </Text>
+                  )}
                 </Paper>
               )}
 

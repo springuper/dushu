@@ -93,27 +93,27 @@
 
 ## 2. MVP 数据模型
 
-### 2.1 设计理念：极简双表
+### 2.1 设计理念：核心三表
 
-MVP 阶段只需要 **2 个核心表**：`Event` 和 `Person`。
+MVP 阶段需要 **3 个核心表**：`Event`、`Person` 和 `Place`。
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     MVP 最小数据模型                             │
 └─────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────┐         ┌─────────────────────┐
-│       Event         │         │       Person        │
-├─────────────────────┤         ├─────────────────────┤
-│ id                  │         │ id                  │
-│ name                │         │ name                │
-│ type                │         │ aliases[]           │
-│ timeRangeStart      │         │ role                │
-│ timeRangeEnd        │         │ faction             │
-│ summary             │◄───────►│ biography           │
-│ impact              │  JSON   │ sourceChapterIds[]  │
-│ chapterId           │  内嵌   │ status              │
-│                     │         └─────────────────────┘
+┌─────────────────────┐         ┌─────────────────────┐         ┌─────────────────────┐
+│       Event         │         │       Person        │         │       Place         │
+├─────────────────────┤         ├─────────────────────┤         ├─────────────────────┤
+│ id                  │         │ id                  │         │ id                  │
+│ name                │         │ name                │         │ name                │
+│ type                │         │ aliases[]           │         │ aliases[]           │
+│ timeRangeStart      │         │ role                │         │ coordinatesLng      │
+│ timeRangeEnd        │         │ faction             │         │ coordinatesLat      │
+│ summary             │◄───────►│ biography           │         │ modernLocation      │
+│ impact              │  JSON   │ sourceChapterIds[]  │         │ sourceChapterIds[]  │
+│ chapterId           │  内嵌   │ status              │         │ status              │
+│                     │         └─────────────────────┘         └─────────────────────┘
 │ actors: [           │
 │   { personId,       │
 │     name,           │  ← 参与者信息内嵌在 Event 中
@@ -121,13 +121,18 @@ MVP 阶段只需要 **2 个核心表**：`Event` 和 `Person`。
 │     description }   │
 │ ]                   │
 │                     │
-│ locationName        │  ← 地点信息内嵌
-│ locationModernName  │     不需要独立的 Place 表（MVP）
+│ locationName        │  ← 地点名称引用（关联到 Place 表）
+│ locationModernName  │     地点详细信息存储在 Place 表中
 └─────────────────────┘
 
 【关系如何处理？】
 不存储！查询时通过"两人共同参与的事件"动态推断。
 ```
+
+**说明**：
+- **Place 表**：地点信息较为关键，包含坐标、现代位置等结构化数据，因此作为独立表存储，类似 Person 表
+- **Event.locationName**：作为地点名称引用，可关联到 Place 表
+- **Place 知识库**：支持跨章节的地点信息聚合和增强（如通过 CHGIS API 获取坐标）
 
 ### 2.2 精简对比
 
@@ -138,8 +143,8 @@ MVP 阶段只需要 **2 个核心表**：`Event` 和 `Person`。
 | EventParticipant | 独立表 | → JSON 内嵌 | 简化为 Event.actors[] |
 | ChapterPerson | 独立表 | ❌ 删除 | 查询时动态生成 |
 | RelationshipSummary | 独立表 | ❌ 删除 | 查询时聚合 |
-| Place | 独立表 | → JSON 内嵌 | 简化为 Event.location |
-| **总计** | **6-7 个表** | **2 个表** | 大幅简化 |
+| Place | 独立表 | ✅ 保留 | 地点信息关键，类似 Person 表 |
+| **总计** | **6-7 个表** | **3 个表** | 大幅简化 |
 
 ### 2.3 Event（事件）模型
 
@@ -799,14 +804,20 @@ POST /api/admin/chapters/:id/extract
 
 ### 7.1 ReviewItem 类型
 
-MVP 阶段只需要两种 ReviewItem 类型：
+MVP 阶段需要三种 ReviewItem 类型：
 
 ```prisma
 enum ReviewItemType {
   EVENT   // 事件
   PERSON  // 人物
+  PLACE   // 地点
 }
 ```
+
+**说明**：
+- **EVENT**：事件信息，包含参与者、地点、时间等
+- **PERSON**：人物信息，包含别名、角色、传记等
+- **PLACE**：地点信息，包含坐标、现代位置、地理背景等（类似 Person，信息关键且需要跨章节聚合）
 
 ### 7.2 审核界面
 

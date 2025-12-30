@@ -56,3 +56,6 @@ data/extracted/
 *.tmp
 *.temp
 .cache/
+
+# Debug files
+debug/

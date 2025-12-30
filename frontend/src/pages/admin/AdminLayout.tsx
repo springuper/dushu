@@ -59,6 +59,7 @@ function AdminLayout() {
         { label: '章节处理', path: '/admin/chapter-process' },
         { label: '事件管理', path: '/admin/events' },
         { label: '人物管理', path: '/admin/persons' },
+        { label: '地点管理', path: '/admin/places' },
       ],
     },
     {

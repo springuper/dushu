@@ -15,8 +15,9 @@ import {
   Loader,
   Alert,
   Box,
+  Button,
 } from '@mantine/core'
-import { IconSearch } from '@tabler/icons-react'
+import { IconSearch, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { getPersons, type Person } from '../../lib/api'
 
@@ -59,6 +60,7 @@ const roleNames: Record<string, string> = {
 export function PersonList({ onPersonClick, selectedPersonId }: PersonListProps) {
   const [search, setSearch] = useState('')
   const [factionFilter, setFactionFilter] = useState<string>('all')
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['persons', { pageSize: 100 }],
@@ -88,6 +90,25 @@ export function PersonList({ onPersonClick, selectedPersonId }: PersonListProps)
       return true
     })
   }, [data?.items, factionFilter, search])
+
+  // 切换卡片展开状态
+  const toggleExpand = (personId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // 阻止触发卡片的 onClick
+    setExpandedCards(prev => {
+      const next = new Set(prev)
+      if (next.has(personId)) {
+        next.delete(personId)
+      } else {
+        next.add(personId)
+      }
+      return next
+    })
+  }
+
+  // 判断内容是否需要展开（超过约100字符或包含换行）
+  const needsExpand = (biography: string) => {
+    return biography && (biography.length > 100 || biography.includes('\n'))
+  }
 
   if (isLoading) {
     return (
@@ -186,9 +207,29 @@ export function PersonList({ onPersonClick, selectedPersonId }: PersonListProps)
                   )}
                 </Group>
 
-                <Text size="xs" c="dimmed" lineClamp={2}>
-                  {person.biography}
-                </Text>
+                {person.biography && (
+                  <>
+                    <Text 
+                      size="xs" 
+                      c="dimmed" 
+                      lineClamp={expandedCards.has(person.id) ? undefined : 2}
+                    >
+                      {person.biography}
+                    </Text>
+                    {needsExpand(person.biography) && (
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        compact
+                        leftSection={expandedCards.has(person.id) ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
+                        onClick={(e) => toggleExpand(person.id, e)}
+                        style={{ alignSelf: 'flex-start', padding: '2px 8px' }}
+                      >
+                        {expandedCards.has(person.id) ? '收起' : '展开全部'}
+                      </Button>
+                    )}
+                  </>
+                )}
               </Stack>
             </Card>
           ))}

@@ -13,6 +13,7 @@ import ChaptersPage from './pages/admin/ChaptersPage'
 import BooksPage from './pages/admin/BooksPage'
 import ChapterProcessPage from './pages/admin/ChapterProcessPage'
 import EventsPage from './pages/admin/EventsPage'
+import PlacesPage from './pages/admin/PlacesPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
@@ -39,6 +40,7 @@ function App() {
         <Route path="chapter-process" element={<ChapterProcessPage />} />
         <Route path="events" element={<EventsPage />} />
         <Route path="persons" element={<PersonsPage />} />
+        <Route path="places" element={<PlacesPage />} />
         <Route path="logs" element={<div>操作日志（开发中）</div>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -148,12 +148,19 @@ app.use('/api/admin/persons', personsRouter)
 import eventsRouter from './routes/events'
 app.use('/api/admin/events', eventsRouter)
 
+import placesRouter from './routes/places'
+app.use('/api/admin/places', placesRouter)
+
 // Public API routes (no authentication required)
 import publicPersonsRouter from './routes/public/persons'
 app.use('/api/persons', publicPersonsRouter)
 
 import publicEventsRouter from './routes/public/events'
 app.use('/api/events', publicEventsRouter)
+
+// Location routes (public)
+import locationsRouter from './routes/locations'
+app.use('/api/locations', locationsRouter)
 
 // Change log routes
 import changelogRouter from './routes/changelog'

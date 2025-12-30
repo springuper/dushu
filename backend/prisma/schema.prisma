@@ -203,6 +203,57 @@ model Person {
   @@index([status])
 }
 
+// 地点 - 跨章节聚合信息（地点知识库）
+model Place {
+  id                String        @id @default(uuid())
+  name              String        @unique // 历史地名，如"鸿门"
+  aliases           String[]      // 别名/其他称呼，如["鸿门堡", "鸿门宴遗址"]
+  
+  // 坐标信息
+  coordinatesLng    Float?        // 经度
+  coordinatesLat    Float?       // 纬度
+  
+  // 现代位置信息
+  modernLocation    String?       @db.Text // 现代位置描述，如"陕西省西安市临潼区骊山北麓"
+  modernAddress     String?       // 可搜索的现代地址，如"鸿门宴遗址"
+  
+  // 历史行政隶属（按层级）
+  adminLevel1       String?       // 一级行政隶属，如"骊邑附近区域"
+  adminLevel2       String?       // 二级行政隶属，如"内史"
+  adminLevel3       String?       // 三级行政隶属，如"秦朝"
+  
+  // 地理背景
+  geographicContext String?       @db.Text // 地理背景描述（100-200字）
+  featureType       String?       // 地点类型，如"地名/军事节点"、"县"、"郡"
+  
+  // 数据来源
+  source            PlaceSource   @default(CHGIS) // 数据来源
+  chgisId           String?       // CHGIS ID（如果来自 CHGIS）
+  verified          Boolean       @default(false) // 是否已验证
+  
+  // 来源追踪
+  sourceChapterIds  String[]      // 信息来源章节ID列表
+  
+  // 时间范围（该地点在历史中的存在时间）
+  timeRangeBegin    String?       // 开始年份，如"-223"
+  timeRangeEnd      String?       // 结束年份，如"1264"
+  
+  status            ContentStatus @default(DRAFT)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([name])
+  @@index([source])
+  @@index([status])
+}
+
+enum PlaceSource {
+  CHGIS      // 来自 CHGIS API
+  LLM        // 来自 LLM 增强
+  HYBRID     // CHGIS + LLM 混合
+  MANUAL     // 手动录入
+}
+
 // ============================================
 // 管理与审核模型
 // ============================================
@@ -242,6 +293,7 @@ model ReviewItem {
 enum ReviewItemType {
   EVENT        // 事件
   PERSON       // 人物
+  PLACE        // 地点
 }
 
 enum ReviewStatus {

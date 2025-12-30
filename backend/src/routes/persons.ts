@@ -9,6 +9,7 @@ import { requireAuth } from '../middleware/auth'
 import { logChange } from '../lib/changeLog'
 import { PersonRole, Faction } from '@prisma/client'
 import { createLogger } from '../lib/logger'
+import { sortEventsByTime } from '../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('persons')
@@ -122,13 +123,15 @@ router.get('/:id', requireAuth, async (req, res) => {
     // 如果提供了 chapterId，返回章节视角的信息
     if (chapterId) {
       // 获取该章节中此人物参与的事件
-      const events = await prisma.event.findMany({
+      const rawEvents = await prisma.event.findMany({
         where: {
           chapterId: chapterId as string,
           status: 'PUBLISHED',
         },
-        orderBy: { timeRangeStart: 'asc' },
       })
+
+      // 按时间正确排序（处理公元前日期和多种格式）
+      const events = sortEventsByTime(rawEvents)
 
       // 筛选此人物参与的事件
       const participatedEvents = events.filter(event => {
@@ -168,7 +171,7 @@ router.get('/:id/events', requireAuth, async (req, res) => {
     }
 
     // 获取所有发布的事件
-    const events = await prisma.event.findMany({
+    const rawEvents = await prisma.event.findMany({
       where: { status: status as any },
       include: {
         chapter: {
@@ -184,8 +187,10 @@ router.get('/:id/events', requireAuth, async (req, res) => {
           },
         },
       },
-      orderBy: { timeRangeStart: 'asc' },
     })
+
+    // 按时间正确排序（处理公元前日期和多种格式）
+    const events = sortEventsByTime(rawEvents)
 
     // 筛选此人物参与的事件
     const participatedEvents = events.filter(event => {
@@ -610,7 +615,7 @@ router.get('/relationships', requireAuth, async (req, res) => {
     }
 
     // 获取所有已发布的事件
-    const events = await prisma.event.findMany({
+    const rawEvents = await prisma.event.findMany({
       where: { status: 'PUBLISHED' },
       include: {
         chapter: {
@@ -626,8 +631,10 @@ router.get('/relationships', requireAuth, async (req, res) => {
           },
         },
       },
-      orderBy: { timeRangeStart: 'asc' },
     })
+
+    // 按时间正确排序（处理公元前日期和多种格式）
+    const events = sortEventsByTime(rawEvents)
 
     // 筛选两人共同参与的事件
     const sharedEvents = events.filter(event => {

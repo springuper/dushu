@@ -326,3 +326,49 @@ export const getRelationship = async (personAId: string, personBId: string): Pro
   })
   return response.data
 }
+
+// ============================================
+// 地点 API
+// ============================================
+
+export interface LocationSearchResult {
+  id: string
+  name: string
+  transcription?: string
+  modernName?: string
+  parentName?: string
+  coordinates: {
+    lng: number
+    lat: number
+  }
+  timeRange?: {
+    begin: string
+    end: string
+  }
+  featureType?: string
+}
+
+export interface LocationSearchResponse {
+  success: boolean
+  data?: LocationSearchResult
+  error?: string
+}
+
+// 查询地点坐标
+export const searchLocation = async (
+  name: string,
+  year?: string
+): Promise<LocationSearchResult> => {
+  const params = new URLSearchParams({ name })
+  if (year) {
+    params.append('year', year)
+  }
+
+  const response = await api.get<LocationSearchResponse>(`/api/locations/search?${params.toString()}`)
+  
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '未找到地点')
+  }
+
+  return response.data.data
+}

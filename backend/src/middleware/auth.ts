@@ -30,21 +30,3 @@ export const requireAuth = (
   next()
 }
 
-/**
- * 可选认证中间件
- * - GET 请求：允许通过（用于公开只读 API）
- * - 其他请求（POST/PUT/DELETE）：需要认证
- */
-export const optionalAuth = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  // GET 请求不需要认证
-  if (req.method === 'GET') {
-    return next()
-  }
-  
-  // 其他请求需要认证
-  return requireAuth(req, res, next)
-}

@@ -2,6 +2,7 @@
  * 事件时间轴组件
  * 显示章节相关的历史事件，按时间排序
  */
+import { useState } from 'react'
 import {
   Stack,
   Text,
@@ -14,10 +15,12 @@ import {
   Box,
   Timeline,
   Tooltip,
+  Button,
 } from '@mantine/core'
-import { IconSword, IconCrown, IconUser, IconDots } from '@tabler/icons-react'
+import { IconSword, IconCrown, IconUser, IconDots, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { getEventsByChapter, type Event } from '../../lib/api'
+import { LocationMapModal } from './LocationMapModal'
 
 interface EventTimelineProps {
   chapterId: string
@@ -56,11 +59,59 @@ export function EventTimeline({
   onJumpToParagraph,
   selectedEventId,
 }: EventTimelineProps) {
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
+  const [mapModalOpened, setMapModalOpened] = useState(false)
+  const [selectedLocation, setSelectedLocation] = useState<{ name: string; year?: string; event?: Event } | null>(null)
+  
   const { data: events, isLoading, error } = useQuery({
     queryKey: ['events', 'by-chapter', chapterId],
     queryFn: () => getEventsByChapter(chapterId),
     enabled: !!chapterId,
   })
+
+  // 切换卡片展开状态
+  const toggleExpand = (eventId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // 阻止触发卡片的 onClick
+    setExpandedCards(prev => {
+      const next = new Set(prev)
+      if (next.has(eventId)) {
+        next.delete(eventId)
+      } else {
+        next.add(eventId)
+      }
+      return next
+    })
+  }
+
+  // 判断内容是否需要展开（超过约150字符或包含换行）
+  const needsExpand = (summary: string) => {
+    return summary && (summary.length > 150 || summary.includes('\n'))
+  }
+
+  // 清理地点名称：处理括号格式，提取主地名
+  // 格式：'主地名 (别名/区域)' -> 返回'主地名'
+  const cleanLocationName = (location: string): string => {
+    // 移除括号及其内容，提取主地名
+    const cleaned = location.replace(/[（(][^）)]+[）)]/g, '').trim()
+    return cleaned || location.trim()
+  }
+
+  // 解析多个地点（逗号分隔）
+  const parseLocations = (locationName: string | undefined): string[] => {
+    if (!locationName) return []
+    return locationName.split(/[,，]/).map(loc => cleanLocationName(loc)).filter(Boolean)
+  }
+
+  // 处理地点点击
+  const handleLocationClick = (locationName: string, event: Event, e: React.MouseEvent) => {
+    e.stopPropagation() // 阻止触发卡片的 onClick
+    setSelectedLocation({
+      name: locationName,
+      year: event.timeRangeStart,
+      event,
+    })
+    setMapModalOpened(true)
+  }
 
   if (isLoading) {
     return (
@@ -144,15 +195,47 @@ export function EventTimeline({
                       {event.timeRangeEnd && ` — ${event.timeRangeEnd}`}
                     </Text>
                     {event.locationName && (
-                      <Text size="xs" c="dimmed">
-                        📍 {event.locationName}
-                      </Text>
+                      <Group gap={4} wrap="wrap">
+                        {parseLocations(event.locationName).map((location, idx) => (
+                          <Text
+                            key={idx}
+                            size="xs"
+                            c="blue"
+                            style={{
+                              cursor: 'pointer',
+                              textDecoration: 'underline',
+                            }}
+                            onClick={(e) => handleLocationClick(location, event, e)}
+                          >
+                            📍 {location}
+                          </Text>
+                        ))}
+                      </Group>
                     )}
                   </Group>
 
-                  <Text size="xs" lineClamp={3}>
-                    {event.summary}
-                  </Text>
+                  {event.summary && (
+                    <>
+                      <Text 
+                        size="xs" 
+                        lineClamp={expandedCards.has(event.id) ? undefined : 3}
+                      >
+                        {event.summary}
+                      </Text>
+                      {needsExpand(event.summary) && (
+                        <Button
+                          variant="subtle"
+                          size="xs"
+                          compact
+                          leftSection={expandedCards.has(event.id) ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
+                          onClick={(e) => toggleExpand(event.id, e)}
+                          style={{ alignSelf: 'flex-start', padding: '2px 8px' }}
+                        >
+                          {expandedCards.has(event.id) ? '收起' : '展开全部'}
+                        </Button>
+                      )}
+                    </>
+                  )}
 
                   {event.actors && event.actors.length > 0 && (
                     <Group gap={4}>
@@ -191,6 +274,25 @@ export function EventTimeline({
           ))}
         </Timeline>
       </ScrollArea>
+
+      {/* 地点地图模态窗口 */}
+      {selectedLocation && (
+        <LocationMapModal
+          opened={mapModalOpened}
+          onClose={() => {
+            setMapModalOpened(false)
+            setSelectedLocation(null)
+          }}
+          locationName={selectedLocation.name}
+          year={selectedLocation.year}
+          relatedEvent={selectedLocation.event}
+          onViewEvent={(event) => {
+            onEventClick?.(event)
+            setMapModalOpened(false)
+            setSelectedLocation(null)
+          }}
+        />
+      )}
     </Stack>
   )
 }

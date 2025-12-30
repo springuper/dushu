@@ -7,6 +7,7 @@ import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { LLMExtractor } from '../lib/llmExtractor'
 import { createLogger } from '../lib/logger'
+import { sortEventsByTime } from '../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('chapters')
@@ -105,13 +106,17 @@ router.get('/:id', async (req, res) => {
         },
         events: {
           where: { status: 'PUBLISHED' },
-          orderBy: { timeRangeStart: 'asc' },
         },
       },
     })
 
     if (!chapter) {
       return res.status(404).json({ error: 'Chapter not found' })
+    }
+
+    // 对事件按时间正确排序（处理公元前日期和多种格式）
+    if (chapter.events) {
+      chapter.events = sortEventsByTime(chapter.events)
     }
 
     res.json(chapter)
@@ -370,11 +375,43 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
       textLength: chapterText.length,
     })
 
+    // 清理该章节的旧 PENDING 状态 ReviewItem（避免重复）
+    // 先查询所有 PENDING 状态的 ReviewItem，然后过滤出属于该章节的
+    const pendingItems = await prisma.reviewItem.findMany({
+      where: {
+        status: 'PENDING',
+        source: 'LLM_EXTRACT',
+      },
+      select: {
+        id: true,
+        originalData: true,
+      },
+    })
+
+    // 过滤出属于该章节的 ReviewItem
+    const itemsToDelete = pendingItems.filter(item => {
+      const data = item.originalData as any
+      return data?.chapterId === id || 
+             (Array.isArray(data?.sourceChapterIds) && data.sourceChapterIds.includes(id))
+    })
+
+    if (itemsToDelete.length > 0) {
+      await prisma.reviewItem.deleteMany({
+        where: {
+          id: { in: itemsToDelete.map(item => item.id) },
+        },
+      })
+      logger.info('Cleaned up old pending review items', {
+        chapterId: id,
+        deletedCount: itemsToDelete.length,
+      })
+    }
+
     // 使用新的事件中心提取方法
     const results = await extractor.extract(chapterText, chapter.paragraphs, id)
 
-    // 创建 ReviewItem（只有 EVENT 和 PERSON 两种类型）
-    const reviewItems: { event: any[]; person: any[] } = { event: [], person: [] }
+    // 创建 ReviewItem（EVENT、PERSON 和 PLACE 三种类型）
+    const reviewItems: { event: any[]; person: any[]; place: any[] } = { event: [], person: [], place: [] }
 
     // 创建事件 ReviewItem
     for (const event of results.events) {
@@ -409,10 +446,27 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
       reviewItems.person.push(reviewItem)
     }
 
+    // 创建地点 ReviewItem
+    for (const place of results.places) {
+      const reviewItem = await prisma.reviewItem.create({
+        data: {
+          type: 'PLACE',
+          status: 'PENDING',
+          source: 'LLM_EXTRACT',
+          originalData: JSON.parse(JSON.stringify({
+            ...place,
+            chapterId: id,
+          })),
+        },
+      })
+      reviewItems.place.push(reviewItem)
+    }
+
     timer.end({
       chapterId: id,
       eventCount: reviewItems.event.length,
       personCount: reviewItems.person.length,
+      placeCount: reviewItems.place.length,
       chunks: results.meta.chunks,
     })
 
@@ -423,6 +477,7 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
       counts: {
         event: reviewItems.event.length,
         person: reviewItems.person.length,
+        place: reviewItems.place.length,
       },
     })
   } catch (error: any) {
@@ -491,13 +546,15 @@ router.get('/:id/events', async (req, res) => {
   try {
     const { status = 'PUBLISHED' } = req.query
 
-    const events = await prisma.event.findMany({
+    const rawEvents = await prisma.event.findMany({
       where: {
         chapterId: id,
         status: status as any,
       },
-      orderBy: { timeRangeStart: 'asc' },
     })
+
+    // 按时间正确排序（处理公元前日期和多种格式）
+    const events = sortEventsByTime(rawEvents)
 
     res.json(events)
   } catch (error: any) {

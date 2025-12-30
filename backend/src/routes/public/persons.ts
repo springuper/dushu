@@ -5,39 +5,10 @@
 import express from 'express'
 import { prisma } from '../../lib/prisma'
 import { createLogger } from '../../lib/logger'
+import { sortEventsByTime } from '../../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('public-persons')
-
-/**
- * 解析中文日期字符串为可排序的数值
- * 公元前用负数表示，公元后用正数
- */
-function parseChineseDate(dateStr: string): number {
-  if (!dateStr) return 0
-  
-  const isBCE = dateStr.startsWith('前')
-  const cleanStr = isBCE ? dateStr.substring(1) : dateStr
-  
-  const yearMatch = cleanStr.match(/(\d+)年/)
-  if (!yearMatch) return 0
-  
-  let year = parseInt(yearMatch[1], 10)
-  const monthMatch = cleanStr.match(/(\d+)月/)
-  const month = monthMatch ? parseInt(monthMatch[1], 10) / 100 : 0
-  
-  if (isBCE) {
-    return -(year - month)
-  }
-  return year + month
-}
-
-/**
- * 按时间排序事件
- */
-function sortEventsByTime<T extends { timeRangeStart: string }>(events: T[]): T[] {
-  return [...events].sort((a, b) => parseChineseDate(a.timeRangeStart) - parseChineseDate(b.timeRangeStart))
-}
 
 // 获取人物列表（公开，只返回已发布的人物）
 router.get('/', async (req, res) => {
