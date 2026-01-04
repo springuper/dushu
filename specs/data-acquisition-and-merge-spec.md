@@ -27,7 +27,7 @@ flowchart TD
     Start([开始]) --> GetRaw["获取原始文本<br/>维基文库/ctext.org"]
     GetRaw --> SaveRaw["保存原始文本<br/>data/raw/"]
     
-    SaveRaw --> Preprocess["数据预处理<br/>preprocess_text.py"]
+    SaveRaw --> Preprocess["数据预处理<br/>preprocess_text.js"]
     Preprocess --> StructJSON["生成结构化JSON<br/>包含段落信息"]
     
     StructJSON --> UploadChapter["上传章节<br/>POST /api/admin/chapters/import"]
@@ -157,7 +157,7 @@ flowchart TD
 ```
 
 **工具**：
-- `scripts/preprocess_text.py` - 自动预处理脚本
+- `scripts/preprocess_text.js` - 自动预处理脚本（Node.js 版本）
 
 ### 2.4 步骤 3：LLM 提取
 
@@ -210,12 +210,35 @@ flowchart TD
 - **混合模式（推荐）**：以事件为中心联合提取（事件 + 关联人物/地点/关系），再用独立提取补全全量人物/地点，并通过对齐/消歧回填一致引用。兼顾一致性与覆盖率。
 
 #### 2.4.2 混合模式流程（事件为中心）
+
+**事件提取采用两阶段流程，确保关键事件（如主角生死）不被遗漏：**
+
 1. **分段/滑窗输入**：按段落或固定 Token 窗口，将文本切块。
-2. **事件联合抽取**：对每块调用“事件为中心”提示，输出事件及其 actors、locations、关系引用、相关段落 ID。
+
+2. **事件提取（两阶段）**：
+   - **第一阶段：提取事件概览**
+     - 快速提取所有事件的基本信息（名称、时间、重要程度）
+     - 评估每个事件的重要程度（L1-L5）
+     - 确保所有 L1 事件（如主角生死、改朝换代）都被识别
+   - **第二阶段：提取事件详情**
+     - 按重要程度排序（L1 > L2 > L3）
+     - 分页提取详细信息（摘要、参与者、地点等）
+     - 优先保证 L1 事件的完整提取
+
 3. **人物/地点补全**：用独立提取再跑一遍全量人物、地点，补齐零散实体。
+
 4. **对齐与消歧**：基于名称/别名快速匹配，疑似重复交给 LLM 判断；生成 canonical 实体 ID。
+
 5. **回填引用**：将事件中的 actors、locations、关系引用映射到 canonical ID（匹配失败则保留未匹配状态，留待人工审核）。
+
 6. **创建 ReviewItem**：事件、人物、地点、关系均进入审核队列，携带匹配/消歧结果。
+
+**重要程度分级标准（L1-L5）**：
+- **L1（最高优先级，必须包含）**：改朝换代、决定性重大战役、主角/核心人物的生死、影响历史进程的关键决策
+- **L2（高优先级）**：重要政治事件、重大军事行动、影响地区或国家局势的事件
+- **L3（中优先级）**：重要人物生死（非主角）、关键转折点、影响主要人物命运的事件
+- **L4（低优先级，可选）**：一般战役、次要政治事件、局部冲突
+- **L5（最低优先级，不提取）**：个人琐事、日常事务、无关紧要的事件
 
 #### 2.4.3 联合事件输出格式（示例）
 ```json
@@ -240,6 +263,7 @@ flowchart TD
       ],
       "summary": "项羽设宴试探刘邦，范增示意要杀，樊哙闯帐解围。",
       "impact": "刘邦脱身，楚汉冲突升级",
+      "importance": "L3",
       "relatedParagraphs": ["para_12", "para_13"]
     }
   ]
@@ -250,6 +274,7 @@ flowchart TD
 - 每批事件不超过 10 条；`summary/impact/description` 控制在 200 字以内。
 - `actors.role` 建议枚举：`PROTAGONIST|ALLY|OPPOSING|ADVISOR|OTHER`。
 - `relationships.type` 复用关系类型枚举，未匹配 ID 时用 `sourceName/targetName`。
+- `importance` 必须为 `L1|L2|L3|L4|L5` 之一，用于事件筛选和排序。
 - 允许缺省 `location`（未知时留空）。
 
 #### 2.4.4 人物/地点补全输出格式（示例）

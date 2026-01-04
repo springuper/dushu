@@ -71,5 +71,5 @@ data/
 **相关文档**：
 - 数据来源说明：`../docs/data/DATA_SOURCES.md`
 - 推荐书籍：`../docs/data/RECOMMENDED_BOOKS.md`
-- 数据准备流程：`../scripts/prepare_data.md`
+- 数据准备流程：`../docs/OPERATION_MANUAL.md`
 

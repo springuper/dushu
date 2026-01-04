@@ -97,7 +97,7 @@ export class LLMService {
   async call(
     prompt: string, 
     systemPrompt?: string, 
-    temperature: number = 0.3,
+    temperature: number = 0.1,
     callId?: string
   ): Promise<string> {
     const inputChars = prompt.length + (systemPrompt?.length || 0)
@@ -124,13 +124,37 @@ export class LLMService {
 
     try {
       if (this.provider === 'gemini') {
-        const fullPrompt = systemPrompt
-          ? `${systemPrompt}\n\n${prompt}`
-          : prompt
+        logger.debug('Gemini API calling', { 
+          promptLength: prompt.length,
+          systemPromptLength: systemPrompt?.length || 0,
+        })
         
-        logger.debug('Gemini API calling', { promptLength: fullPrompt.length })
-        const result = await this.client.generateContent(fullPrompt)
-        const text = result.response.text()
+        const requestConfig: any = {
+          systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature,
+          },
+        }
+        const result = await this.client.generateContent(requestConfig)
+        
+        // 检查 response 是否存在
+        if (!result.response) {
+          throw new Error('Gemini API returned no response')
+        }
+        
+        let text: string
+        try {
+          text = result.response.text()
+        } catch (textError: any) {
+          // 如果 text() 方法失败，保存原始 response 用于调试
+          saveDebugFile(`${finalCallId}_response_error.txt`, JSON.stringify({
+            error: textError.message,
+            response: result.response,
+            candidates: result.response.candidates,
+          }, null, 2))
+          throw new Error(`Failed to extract text from Gemini response: ${textError.message}`)
+        }
         
         // 保存 response 到文件
         saveDebugFile(`${finalCallId}_response.txt`, text)
@@ -183,6 +207,29 @@ export class LLMService {
         return text
       }
     } catch (error: any) {
+      // 保存错误信息到文件
+      const errorInfo = {
+        error: error.message,
+        errorName: error.name,
+        errorCode: error.code || error.status,
+        stack: error.stack,
+        provider: this.provider,
+        model: this.model,
+        inputChars,
+        timestamp: new Date().toISOString(),
+      }
+      saveDebugFile(`${finalCallId}_error.json`, JSON.stringify(errorInfo, null, 2))
+      
+      // 如果有 response 但解析失败，也保存原始 response
+      if (error.response || (error.cause && error.cause.response)) {
+        try {
+          const responseData = error.response || error.cause.response
+          saveDebugFile(`${finalCallId}_error_response.txt`, JSON.stringify(responseData, null, 2))
+        } catch (e) {
+          // 忽略序列化错误
+        }
+      }
+      
       logger.error('LLM request failed', {
         provider: this.provider,
         model: this.model,
@@ -190,6 +237,8 @@ export class LLMService {
         errorName: error.name,
         errorMessage: error.message,
         errorCode: error.code || error.status,
+        callId: finalCallId,
+        debugFile: `See debug/llm-calls/${finalCallId}_error.json for details`,
       })
       timer.endWithError(error, { provider: this.provider, inputChars })
       throw error

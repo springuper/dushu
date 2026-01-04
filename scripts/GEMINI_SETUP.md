@@ -115,6 +115,6 @@ python scripts/extract_with_llm.py \
 ---
 
 **相关文档**：
-- 快速开始：`quick_start_data.md`
+- 操作手册：`../docs/OPERATION_MANUAL.md`
 - 工具说明：`README.md`
 

@@ -161,6 +161,9 @@ model Event {
   // 格式: [{ personId: string|null, name: string, roleType: string, description?: string }]
   actors             Json          @default("[]")
   
+  // 重要程度（L1-L5，用于事件筛选和排序）
+  importance         String?       // 'L1' | 'L2' | 'L3' | 'L4' | 'L5'
+  
   // 来源
   chapterId          String
   relatedParagraphs  String[]      // 相关段落ID列表
@@ -176,6 +179,7 @@ model Event {
   @@index([type])
   @@index([timeRangeStart])
   @@index([status])
+  @@index([importance])
 }
 
 // 人物 - 跨章节聚合信息
@@ -229,7 +233,6 @@ model Place {
   // 数据来源
   source            PlaceSource   @default(CHGIS) // 数据来源
   chgisId           String?       // CHGIS ID（如果来自 CHGIS）
-  verified          Boolean       @default(false) // 是否已验证
   
   // 来源追踪
   sourceChapterIds  String[]      // 信息来源章节ID列表

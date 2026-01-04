@@ -24,7 +24,7 @@ import {
   Tabs,
 } from '@mantine/core'
 import { api } from '../../lib/api'
-import { IconCheck, IconX, IconEye } from '@tabler/icons-react'
+import { IconCheck, IconX, IconEye, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 
 const REVIEW_TYPES = [
   { value: '', label: '全部类型' },
@@ -72,6 +72,7 @@ function ReviewPage() {
     action: 'approve' | 'reject' | null
     ids: string[]
   }>({ open: false, action: null, ids: [] })
+  const [approveAllModal, setApproveAllModal] = useState(false)
   const [notes, setNotes] = useState('')
 
   const queryClient = useQueryClient()
@@ -130,6 +131,17 @@ function ReviewPage() {
       queryClient.invalidateQueries({ queryKey: ['review-items'] })
       setSelectedIds([])
       setActionModal({ open: false, action: null, ids: [] })
+    },
+  })
+
+  const approveAllMutation = useMutation({
+    mutationFn: async ({ type, notes }: { type?: string; notes?: string }) => {
+      return api.post('/api/admin/review/approve-all', { type, notes })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review-items'] })
+      setApproveAllModal(false)
+      setNotes('')
     },
   })
 
@@ -212,7 +224,7 @@ function ReviewPage() {
           <Text size="xs" c="dimmed">
             {data.aliases?.length > 0 && `别名: ${data.aliases.join(', ')} | `}
             {data.featureType && `类型: ${data.featureType} | `}
-            {data.coordinates && `坐标: ${data.coordinates.lng.toFixed(4)}, ${data.coordinates.lat.toFixed(4)}`}
+            {data.coordinates && data.coordinates.lng != null && data.coordinates.lat != null && `坐标: ${data.coordinates.lng.toFixed(4)}, ${data.coordinates.lat.toFixed(4)}`}
           </Text>
           {data.modernLocation && (
             <Text size="xs" lineClamp={1} c="dimmed">
@@ -233,21 +245,35 @@ function ReviewPage() {
       <Title order={2} mb="xl">审核管理</Title>
 
       {/* 筛选器 */}
-      <Group mb="md">
-        <Select
-          placeholder="类型"
-          data={REVIEW_TYPES}
-          value={type}
-          onChange={(v) => setType(v || '')}
-          clearable
-        />
-        <Select
-          placeholder="状态"
-          data={REVIEW_STATUSES}
-          value={status}
-          onChange={(v) => setStatus(v || '')}
-          clearable
-        />
+      <Group mb="md" justify="space-between">
+        <Group>
+          <Select
+            placeholder="类型"
+            data={REVIEW_TYPES}
+            value={type}
+            onChange={(v) => setType(v || '')}
+            clearable
+          />
+          <Select
+            placeholder="状态"
+            data={REVIEW_STATUSES}
+            value={status}
+            onChange={(v) => setStatus(v || '')}
+            clearable
+          />
+        </Group>
+        {status === 'PENDING' && (
+          <Button
+            color="green"
+            leftSection={<IconCheck size={16} />}
+            onClick={() => {
+              setNotes('')
+              setApproveAllModal(true)
+            }}
+          >
+            一键全部通过
+          </Button>
+        )}
       </Group>
 
       {/* 批量操作栏 */}
@@ -443,6 +469,51 @@ function ReviewPage() {
           </Group>
         </Stack>
       </Modal>
+
+      {/* 一键全部通过确认弹窗 */}
+      <Modal
+        opened={approveAllModal}
+        onClose={() => setApproveAllModal(false)}
+        title="一键全部通过"
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            确定要通过所有符合条件的待审核项吗？
+            {type && (
+              <Text component="span" fw={500}>
+                {' '}（类型: {typeLabels[type] || type}）
+              </Text>
+            )}
+          </Text>
+          <Text size="xs" c="dimmed">
+            此操作将根据当前筛选条件（类型: {type || '全部'}, 状态: 待审核）批量通过所有符合条件的审核项。
+          </Text>
+          <Textarea
+            label="备注（可选）"
+            placeholder="添加审核备注..."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            minRows={2}
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="light"
+              onClick={() => setApproveAllModal(false)}
+            >
+              取消
+            </Button>
+            <Button
+              color="green"
+              onClick={() => {
+                approveAllMutation.mutate({ type: type || undefined, notes })
+              }}
+              loading={approveAllMutation.isPending}
+            >
+              确认全部通过
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Container>
   )
 }
@@ -459,6 +530,10 @@ function ReviewDetailModal({
   onApprove: (id: string) => void
   onReject: (id: string) => void
 }) {
+  const [expandedSummary, setExpandedSummary] = useState(false)
+  const [expandedImpact, setExpandedImpact] = useState(false)
+  const [expandedBiography, setExpandedBiography] = useState(false)
+
   const { data: item, isLoading } = useQuery({
     queryKey: ['review-item', itemId],
     queryFn: async () => {
@@ -469,6 +544,12 @@ function ReviewDetailModal({
   })
 
   const data = item?.modifiedData || item?.originalData
+
+  // 判断内容是否需要展开（超过约150字符或包含换行）
+  const needsExpand = (text: string | null | undefined) => {
+    if (!text) return false
+    return text.length > 150 || text.includes('\n')
+  }
 
   return (
     <Modal
@@ -509,11 +590,55 @@ function ReviewDetailModal({
                       )}
                     </Group>
                     <Divider label="摘要" labelPosition="left" mb="sm" />
-                    <Text size="sm">{data.summary}</Text>
+                    <Stack gap="xs">
+                      <Text 
+                        size="sm" 
+                        style={{ 
+                          lineClamp: expandedSummary ? undefined : 3,
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {data.summary}
+                      </Text>
+                      {needsExpand(data.summary) && (
+                        <Button
+                          variant="subtle"
+                          size="xs"
+                          compact
+                          leftSection={expandedSummary ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                          onClick={() => setExpandedSummary(!expandedSummary)}
+                          style={{ alignSelf: 'flex-start' }}
+                        >
+                          {expandedSummary ? '收起' : '展开全部'}
+                        </Button>
+                      )}
+                    </Stack>
                     {data.impact && (
                       <>
                         <Divider label="影响" labelPosition="left" my="sm" />
-                        <Text size="sm">{data.impact}</Text>
+                        <Stack gap="xs">
+                          <Text 
+                            size="sm" 
+                            style={{ 
+                              lineClamp: expandedImpact ? undefined : 3,
+                              whiteSpace: 'pre-wrap',
+                            }}
+                          >
+                            {data.impact}
+                          </Text>
+                          {needsExpand(data.impact) && (
+                            <Button
+                              variant="subtle"
+                              size="xs"
+                              compact
+                              leftSection={expandedImpact ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                              onClick={() => setExpandedImpact(!expandedImpact)}
+                              style={{ alignSelf: 'flex-start' }}
+                            >
+                              {expandedImpact ? '收起' : '展开全部'}
+                            </Button>
+                          )}
+                        </Stack>
                       </>
                     )}
                     {data.actors?.length > 0 && (
@@ -548,7 +673,29 @@ function ReviewDetailModal({
                     {data.birthYear && <Text size="sm" c="dimmed">{data.birthYear} ~ {data.deathYear || '?'}</Text>}
                   </Group>
                   <Divider label="传记" labelPosition="left" mb="sm" />
-                  <Text size="sm">{data.biography}</Text>
+                  <Stack gap="xs">
+                    <Text 
+                      size="sm" 
+                      style={{ 
+                        lineClamp: expandedBiography ? undefined : 3,
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      {data.biography}
+                    </Text>
+                    {needsExpand(data.biography) && (
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        compact
+                        leftSection={expandedBiography ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                        onClick={() => setExpandedBiography(!expandedBiography)}
+                        style={{ alignSelf: 'flex-start' }}
+                      >
+                        {expandedBiography ? '收起' : '展开全部'}
+                      </Button>
+                    )}
+                  </Stack>
                 </Paper>
               )}
 
@@ -561,7 +708,7 @@ function ReviewDetailModal({
                   <Group gap="xs" mb="sm">
                     {data.featureType && <Badge size="sm">{data.featureType}</Badge>}
                     {data.source && <Badge size="sm" variant="light">来源: {data.source}</Badge>}
-                    {data.coordinates && (
+                    {data.coordinates && data.coordinates.lng != null && data.coordinates.lat != null && (
                       <Text size="sm" c="dimmed">
                         坐标: {data.coordinates.lng.toFixed(4)}, {data.coordinates.lat.toFixed(4)}
                       </Text>

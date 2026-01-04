@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   AppShell,
+  Box,
   Text,
   Group,
   Button,
@@ -105,20 +106,22 @@ function AdminLayout() {
       <AppShell.Navbar p="md">
         {navItems.map((section) => (
           <div key={section.label}>
-            <Text size="xs" fw={700} c="dimmed" mb="xs" px="md">
+            <Text size="xs" fw={700} c="dimmed" px="sm">
               {section.label}
             </Text>
-            {section.children.map((item) => (
-              <NavLink
-                key={item.path}
-                label={item.label}
-                active={location.pathname === item.path}
-                onClick={() => {
-                  navigate(item.path)
-                  setOpened(false)
-                }}
-              />
-            ))}
+            <Box mb="md">
+              {section.children.map((item) => (
+                <NavLink
+                  key={item.path}
+                  label={item.label}
+                  active={location.pathname === item.path}
+                  onClick={() => {
+                    navigate(item.path)
+                    setOpened(false)
+                  }}
+                />
+              ))}
+            </Box>
           </div>
         ))}
       </AppShell.Navbar>

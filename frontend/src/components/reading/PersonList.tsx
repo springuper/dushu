@@ -105,9 +105,13 @@ export function PersonList({ onPersonClick, selectedPersonId }: PersonListProps)
     })
   }
 
-  // 判断内容是否需要展开（超过约100字符或包含换行）
+  // 判断内容是否需要展开
+  // 由于 lineClamp={2} 大约能显示 60-80 个字符（取决于字体和宽度）
+  // 我们设置一个较低的阈值，确保大部分需要展开的内容都能显示按钮
   const needsExpand = (biography: string) => {
-    return biography && (biography.length > 100 || biography.includes('\n'))
+    if (!biography) return false
+    // 降低阈值：超过60字符或包含换行就显示展开按钮
+    return biography.length > 60 || biography.includes('\n')
   }
 
   if (isLoading) {

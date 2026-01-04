@@ -13,6 +13,9 @@
     "create-admin": "tsx scripts/create-admin.ts",
     "reprocess-approved": "tsx scripts/reprocess-approved-items.ts",
     "clear-data": "tsx scripts/clear_data.ts",
+    "deduplicate-events": "tsx scripts/deduplicate_events.ts",
+    "fix-han-calendar-dates": "tsx scripts/fix_han_calendar_dates.ts",
+    "fix-han-calendar-dates:dry-run": "tsx scripts/fix_han_calendar_dates.ts --dry-run",
     "studio": "prisma studio",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

@@ -63,7 +63,7 @@
 ### 工具脚本
 
 - **[../scripts/README.md](../scripts/README.md)** - 脚本使用说明
-- **[../scripts/prepare_data.md](../scripts/prepare_data.md)** - 数据准备流程（快速参考）
+- **[OPERATION_MANUAL.md](./OPERATION_MANUAL.md)** - 完整操作手册（数据准备到发布）
 - **[../scripts/INCREMENTAL_WORKFLOW.md](../scripts/INCREMENTAL_WORKFLOW.md)** - 渐进式工作流指南
 
 ### 后端文档
@@ -75,7 +75,7 @@
 - 🚀 **新手上路**：从 [setup/QUICK_START.md](./setup/QUICK_START.md) 开始
 - 📖 **操作手册**：查看 [OPERATION_MANUAL.md](./OPERATION_MANUAL.md) - 数据提取与发布完整流程
 - 📋 **了解项目**：查看 [development/roadmap.md](./development/roadmap.md)
-- 📚 **准备数据**：参考 [data/RECOMMENDED_BOOKS.md](./data/RECOMMENDED_BOOKS.md) 和 [scripts/prepare_data.md](../scripts/prepare_data.md)
+- 📚 **准备数据**：参考 [data/RECOMMENDED_BOOKS.md](./data/RECOMMENDED_BOOKS.md) 和 [OPERATION_MANUAL.md](./OPERATION_MANUAL.md)
 - 🧪 **运行测试**：查看 [testing/TESTING.md](./testing/TESTING.md)
 
 ---

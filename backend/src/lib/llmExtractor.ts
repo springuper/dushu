@@ -20,6 +20,8 @@ import {
 } from './utils'
 import {
   buildEventPrompt,
+  buildEventOverviewPrompt,
+  buildEventDetailsPrompt,
   eventSystemPrompt,
   buildPersonPrompt,
   personSystemPrompt,
@@ -41,6 +43,18 @@ export interface EventActor {
   description?: string      // 在此事件中的表现
 }
 
+// 事件重要程度级别
+export type EventImportance = 'L1' | 'L2' | 'L3' | 'L4' | 'L5'
+
+// 第一阶段：事件概览（用于快速提取和排序）
+export interface EventOverview {
+  name: string
+  timeRangeStart: string
+  timeRangeEnd?: string | null
+  importance: EventImportance
+  relatedParagraphs?: string[]  // 用于定位
+}
+
 export interface ExtractedEvent {
   name: string
   type: 'BATTLE' | 'POLITICAL' | 'PERSONAL' | 'OTHER'
@@ -53,6 +67,7 @@ export interface ExtractedEvent {
   impact?: string
   actors: EventActor[]
   relatedParagraphs?: string[]
+  importance: EventImportance  // 新增：事件重要程度
 }
 
 export interface ExtractedPerson {
@@ -220,88 +235,311 @@ export class LLMExtractor {
   // countByType, chunkParagraphsWithIds 已移至 utils.ts
 
   /**
-   * 提取事件（包含内嵌的 actors 和地点信息，以及段落关联）
+   * 提取事件（两阶段提取：先提取概览，再提取详情）
+   * 第一阶段：提取所有事件的概览信息（名称、时间、重要程度）
+   * 第二阶段：按重要程度排序，分页提取详细信息
    */
   private async extractEvents(
     chunks: string[], 
     chunkParagraphIds: string[][],
     paragraphs: ParagraphInput[]
   ): Promise<{ events: ExtractedEvent[]; truncatedEvents: string[] }> {
-    const allEvents: ExtractedEvent[] = []
-    const allTruncated: string[] = []
     const startTime = Date.now()
+    const PAGE_SIZE = 25 // 每页返回的事件数量
+    const MAX_RETRIES = 0
 
-    logger.info('Starting event extraction', { totalChunks: chunks.length })
+    logger.info('Starting two-phase event extraction', { 
+      totalChunks: chunks.length,
+      pageSize: PAGE_SIZE,
+    })
+
+    // ============================================
+    // 第一阶段：提取所有事件的概览信息
+    // ============================================
+    logger.info('Phase 1: Extracting event overviews...')
+    const allOverviews: EventOverview[] = []
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]
       const paragraphIds = chunkParagraphIds[i] || []
       
-      // 获取该 chunk 中的段落（带ID）用于提示词
       const chunkParagraphs = paragraphIds.map(id => {
         const para = paragraphs.find(p => p.id === id)
         return para ? { id, text: para.text } : null
       }).filter(Boolean) as { id: string; text: string }[]
       
-      const prompt = buildEventPrompt(chunk, chunkParagraphs)
-      const chunkStartTime = Date.now()
-      
-      logger.info(`Processing chunk ${i + 1}/${chunks.length} for events`, {
-        chunkIndex: i + 1,
-        totalChunks: chunks.length,
-        chunkLength: chunk.length,
-        paragraphCount: paragraphIds.length,
-        chunkPreview: chunk.substring(0, 100).replace(/\n/g, ' ') + '...',
-      })
-      
       try {
-        const result = await this.llm.callJSON<{
-          events: ExtractedEvent[]
-          truncated?: string[]
-        }>(prompt, eventSystemPrompt())
-
-        const chunkDuration = Date.now() - chunkStartTime
+        const prompt = buildEventOverviewPrompt(chunk, chunkParagraphs)
         
-        if (result.events) {
-          allEvents.push(...result.events)
-          // 记录提取到的事件名称
-          const eventNames = result.events.map(e => e.name).slice(0, 5)
-          const eventsWithParagraphs = result.events.filter(e => e.relatedParagraphs && e.relatedParagraphs.length > 0).length
-          logger.info(`Chunk ${i + 1} events extracted`, {
+        logger.debug(`Extracting overviews for chunk ${i + 1}/${chunks.length}`)
+
+        let retries = 0
+        let success = false
+        let result: { eventOverviews: EventOverview[] } | null = null
+
+        while (retries <= MAX_RETRIES && !success) {
+          try {
+            result = await this.llm.callJSON<{ eventOverviews: EventOverview[] }>(
+              prompt,
+              eventSystemPrompt()
+            )
+            success = true
+          } catch (err: any) {
+            retries++
+            if (retries > MAX_RETRIES) {
+              throw err
+            }
+            logger.warn(`Overview extraction failed, retrying`, {
+              chunkIndex: i + 1,
+              retry: retries,
+              error: err.message,
+            })
+            await new Promise(resolve => setTimeout(resolve, 1000 * retries))
+          }
+        }
+
+        if (result && result.eventOverviews) {
+          allOverviews.push(...result.eventOverviews)
+          logger.info(`Chunk ${i + 1} overviews extracted`, {
             chunkIndex: i + 1,
-            eventsFound: result.events.length,
-            eventsWithParagraphs,
-            eventNames: eventNames.length < result.events.length 
-              ? [...eventNames, `...+${result.events.length - 5} more`] 
-              : eventNames,
-            actorsCount: result.events.reduce((sum, e) => sum + (e.actors?.length || 0), 0),
-            duration: chunkDuration,
+            overviewsCount: result.eventOverviews.length,
+            importanceBreakdown: this.countByImportance(result.eventOverviews),
           })
         }
-        if (result.truncated && result.truncated.length > 0) {
-          allTruncated.push(...result.truncated)
-          logger.warn('Some events were truncated', { truncated: result.truncated })
+      } catch (err: any) {
+        logger.error('Event overview extraction failed for chunk', {
+          chunkIndex: i + 1,
+          error: err.message,
+        })
+      }
+    }
+
+    // 去重和合并（按名称和时间）
+    const uniqueOverviews = this.deduplicateOverviews(allOverviews)
+    logger.info('Phase 1 completed: Event overviews extracted', {
+      totalOverviews: uniqueOverviews.length,
+      importanceBreakdown: this.countByImportance(uniqueOverviews),
+    })
+
+    // 按重要程度和时间排序
+    const sortedOverviews = this.sortOverviewsByImportance(uniqueOverviews)
+
+    // ============================================
+    // 第二阶段：分页提取详细信息
+    // ============================================
+    logger.info('Phase 2: Extracting event details...')
+    const allEvents: ExtractedEvent[] = []
+    const allTruncated: string[] = []
+
+    // 优先提取L1事件，然后L2，最后L3
+    const l1Events = sortedOverviews.filter(o => o.importance === 'L1')
+    const l2Events = sortedOverviews.filter(o => o.importance === 'L2')
+    const l3Events = sortedOverviews.filter(o => o.importance === 'L3')
+    const l4Events = sortedOverviews.filter(o => o.importance === 'L4')
+
+    // 合并所有需要提取的事件（L1-L3，L4可选）
+    const eventsToExtract = [...l1Events, ...l2Events, ...l3Events]
+
+    logger.info('Phase 2: Events to extract', {
+      l1Count: l1Events.length,
+      l2Count: l2Events.length,
+      l3Count: l3Events.length,
+      l4Count: l4Events.length,
+      totalToExtract: eventsToExtract.length,
+    })
+
+    // 分页提取详细信息
+    let offset = 0
+    let pageNumber = 1
+
+    while (offset < eventsToExtract.length) {
+      const endIndex = Math.min(offset + PAGE_SIZE, eventsToExtract.length)
+      const pageOverviews = eventsToExtract.slice(offset, endIndex)
+
+      // 获取这些事件所在的所有chunks的文本
+      const relevantChunks: string[] = []
+      const relevantChunkParagraphs: { id: string; text: string }[][] = []
+
+      for (let i = 0; i < chunks.length; i++) {
+        const paragraphIds = chunkParagraphIds[i] || []
+        const chunkParagraphs = paragraphIds.map(id => {
+          const para = paragraphs.find(p => p.id === id)
+          return para ? { id, text: para.text } : null
+        }).filter(Boolean) as { id: string; text: string }[]
+
+        // 检查这个chunk是否包含当前页的事件
+        const hasRelevantEvent = pageOverviews.some(overview =>
+          overview.relatedParagraphs?.some(paraId =>
+            paragraphIds.includes(paraId)
+          )
+        )
+
+        if (hasRelevantEvent) {
+          relevantChunks.push(chunks[i])
+          relevantChunkParagraphs.push(chunkParagraphs)
+        }
+      }
+
+      // 合并所有相关chunks的文本
+      const combinedText = relevantChunks.join('\n\n')
+      const combinedParagraphs = relevantChunkParagraphs.flat()
+
+      try {
+        const prompt = buildEventDetailsPrompt(
+          pageOverviews,
+          combinedText,
+          combinedParagraphs
+        )
+
+        logger.debug(`Fetching event details page`, {
+          pageNumber,
+          offset,
+          limit: PAGE_SIZE,
+          eventsInPage: pageOverviews.length,
+        })
+
+        let retries = 0
+        let success = false
+        let result: {
+          eventDetails: ExtractedEvent[]
+        } | null = null
+
+        while (retries <= MAX_RETRIES && !success) {
+          try {
+            result = await this.llm.callJSON<{
+              eventDetails: ExtractedEvent[]
+            }>(prompt, eventSystemPrompt())
+
+            success = true
+          } catch (err: any) {
+            retries++
+            if (retries > MAX_RETRIES) {
+              throw err
+            }
+            logger.warn(`Details extraction failed, retrying`, {
+              pageNumber,
+              retry: retries,
+              error: err.message,
+            })
+            await new Promise(resolve => setTimeout(resolve, 1000 * retries))
+          }
+        }
+
+        if (result && result.eventDetails) {
+          allEvents.push(...result.eventDetails)
+          logger.info(`Page ${pageNumber} completed`, {
+            pageNumber,
+            offset,
+            eventsInPage: result.eventDetails.length,
+            totalEventsSoFar: allEvents.length,
+          })
+        }
+
+        offset = endIndex
+        pageNumber++
+
+        // 添加短暂延迟，避免 API 限流
+        if (offset < eventsToExtract.length) {
+          await new Promise(resolve => setTimeout(resolve, 500))
         }
       } catch (err: any) {
-        logger.error('Event extraction failed for chunk', {
-          chunkIndex: i + 1,
-          chunkLength: chunk.length,
+        logger.error('Event details extraction failed for page', {
+          pageNumber,
+          offset,
           error: err.message,
-          stack: err.stack?.split('\n').slice(0, 3).join(' '),
         })
+        // 继续处理下一页
+        offset = endIndex
+        pageNumber++
       }
     }
 
     const totalDuration = Date.now() - startTime
     logger.info('Event extraction completed', {
       totalChunks: chunks.length,
+      totalOverviews: uniqueOverviews.length,
       totalEvents: allEvents.length,
       truncatedCount: allTruncated.length,
       totalDuration,
       avgTimePerChunk: Math.round(totalDuration / chunks.length),
+      importanceBreakdown: this.countByImportance(allEvents),
     })
 
     return { events: allEvents, truncatedEvents: allTruncated }
+  }
+
+  /**
+   * 按重要程度统计事件数量
+   */
+  private countByImportance(
+    items: Array<{ importance: EventImportance }>
+  ): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const item of items) {
+      const level = item.importance || 'UNKNOWN'
+      counts[level] = (counts[level] || 0) + 1
+    }
+    return counts
+  }
+
+  /**
+   * 去重事件概览（按名称和时间）
+   */
+  private deduplicateOverviews(overviews: EventOverview[]): EventOverview[] {
+    const seen = new Map<string, EventOverview>()
+    
+    for (const overview of overviews) {
+      const key = `${overview.name}|${overview.timeRangeStart}`
+      if (!seen.has(key)) {
+        seen.set(key, overview)
+      } else {
+        // 如果已存在，合并段落ID
+        const existing = seen.get(key)!
+        if (overview.relatedParagraphs) {
+          const merged = new Set([
+            ...(existing.relatedParagraphs || []),
+            ...overview.relatedParagraphs,
+          ])
+          existing.relatedParagraphs = Array.from(merged)
+        }
+        // 保留更高的重要程度
+        if (this.compareImportance(overview.importance, existing.importance) > 0) {
+          existing.importance = overview.importance
+        }
+      }
+    }
+    
+    return Array.from(seen.values())
+  }
+
+  /**
+   * 按重要程度和时间排序事件概览
+   */
+  private sortOverviewsByImportance(overviews: EventOverview[]): EventOverview[] {
+    return [...overviews].sort((a, b) => {
+      // 首先按重要程度排序（L1 > L2 > L3 > L4 > L5）
+      const importanceDiff = this.compareImportance(a.importance, b.importance)
+      if (importanceDiff !== 0) {
+        return -importanceDiff // 降序
+      }
+      
+      // 同级别内按时间排序
+      return a.timeRangeStart.localeCompare(b.timeRangeStart)
+    })
+  }
+
+  /**
+   * 比较重要程度（返回正数表示 a > b）
+   */
+  private compareImportance(a: EventImportance, b: EventImportance): number {
+    const levels: Record<EventImportance, number> = {
+      L1: 5,
+      L2: 4,
+      L3: 3,
+      L4: 2,
+      L5: 1,
+    }
+    return (levels[a] || 0) - (levels[b] || 0)
   }
 
   // buildEventPrompt 和 eventSystemPrompt 已移至 prompts.ts
@@ -868,7 +1106,6 @@ export class LLMExtractor {
       chgisId: placeData.chgisId,
       timeRangeBegin: placeData.timeRangeBegin,
       timeRangeEnd: placeData.timeRangeEnd,
-      verified: false, // 默认未验证，需要人工审核
     }
     
     if (existingPlace) {

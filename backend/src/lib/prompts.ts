@@ -10,11 +10,265 @@ import { ExtractedPlace } from './llmExtractor'
 // ============================================
 
 /**
- * 构建事件提取提示词
+ * 第一阶段：构建事件概览提取提示词
+ * 用于快速提取所有事件的基本信息（名称、时间、重要程度）
+ */
+export function buildEventOverviewPrompt(
+  text: string,
+  paragraphs?: { id: string; text: string }[]
+): string {
+  let processedText = text
+  if (paragraphs && paragraphs.length > 0) {
+    processedText = paragraphs.map((p) => `[${p.id}] ${p.text.trim()}`).join('\n\n')
+  }
+
+  const formatNote =
+    paragraphs && paragraphs.length > 0
+      ? `\n\n**格式说明**：每段文本前标注了段落ID（格式为 \`[段落ID]\`），请在提取事件时，将事件关联到相关的段落ID（在 \`relatedParagraphs\` 字段中使用对应的段落ID）。\n\n`
+      : '\n\n'
+
+  return `你是历史事件提取专家。请从以下文本中提取所有重要历史事件的概览信息。
+
+## 输出格式（JSON）
+
+{
+  "eventOverviews": [
+    {
+      "name": "事件名称",
+      "timeRangeStart": "开始时间，必须使用公元纪年格式：
+        - 公元前：使用'-XX年'或'-XX-月'格式，如'-206年'、'-206-12'（表示公元前206年12月）
+        - 公元后：使用'XX年'或'XX-月'格式，如'25年'、'25-12'
+        - 不确定的年份：'约-206年'或'约25年'
+        
+        **重要：朝代纪年转换规则（以十月为岁首的朝代）**
+        
+        1. **秦朝（公元前221-前207年）和汉朝初期（公元前206-前104年）**：
+           这两个朝代都以十月为岁首（一年的开始是十月），转换时需注意：
+           - X年十月、十一月、十二月 = 该年号对应公元年份的10月、11月、12月
+           - X年一月到九月 = 该年号对应公元年份+1年的1月到9月
+           
+           关键年号对应：
+           - 秦始皇元年 = 公元前221年
+           - 秦二世元年 = 公元前209年
+           - 汉元年 = 公元前206年（刘邦称汉王）
+           
+           示例：
+           - 秦始皇二十六年十月 = 公元前221年10月
+           - 秦始皇二十六年一月 = 公元前220年1月
+           - 秦二世元年十月 = 公元前209年10月
+           - 秦二世元年一月 = 公元前208年1月
+           - 汉元年十月 = 公元前206年10月
+           - 汉元年一月 = 公元前205年1月
+           - 汉十二年四月 = 公元前195年4月
+           - 汉十二年十月 = 公元前196年10月
+        
+        2. **汉武帝太初元年（公元前104年）之后**：
+           岁首改为正月，月份直接对应，无需特殊转换。
+        
+        3. **其他朝代**：直接查找该年号对应的公元年份，月份直接对应。
+        
+        4. **不要使用朝代年号格式**：必须转换为公元纪年，不要使用'汉元年'、'秦二世元年'等格式",
+      "timeRangeEnd": "结束时间（可选），格式同上",
+      "importance": "L1|L2|L3|L4|L5",
+      "relatedParagraphs": ["段落ID1", "段落ID2"]
+    }
+  ]
+}
+
+## 重要程度分级标准
+
+**L1（最高优先级，必须包含）**：
+- 改朝换代（如刘邦即皇帝位）
+- 决定性重大战役（如垓下之战）
+- **主角/核心人物的生死**（如刘邦崩、项羽死）
+- 影响历史进程的关键决策（如怀王约先入关中者王之）
+
+**L2（高优先级）**：
+- 重要政治事件（如项羽分封十八路诸侯）
+- 重大军事行动（如刘邦入咸阳）
+- 影响地区或国家局势的事件（如彭城之战）
+
+**L3（中优先级）**：
+- 重要人物生死（非主角，如范增之死）
+- 关键转折点（如鸿门宴）
+- 影响主要人物命运的事件（如韩信请封假齐王）
+
+**L4（低优先级，可选）**：
+- 一般战役、次要政治事件、局部冲突
+
+**L5（最低优先级，不提取）**：
+- 个人琐事、日常事务、无关紧要的事件
+
+## 提取要求
+
+1. **提取所有级别1-3的事件**，忽略级别4-5
+2. **必须包含所有L1事件**，即使数量较多
+3. **准确评估重要程度**：
+   - 主角/核心人物的生死**必须**标记为L1
+   - 改朝换代**必须**标记为L1
+   - 决定性战役**必须**标记为L1或L2
+4. **按时间顺序排列**（timeRangeStart）
+5. **关联段落ID**，便于后续定位
+6. **只输出 JSON**，不要其他说明文字
+
+## 待处理文本${formatNote}${processedText}`
+}
+
+/**
+ * 第二阶段：构建事件详情提取提示词
+ * 根据事件概览列表，提取指定范围内事件的详细信息
+ */
+export function buildEventDetailsPrompt(
+  eventOverviews: Array<{ name: string; timeRangeStart: string; importance: string; relatedParagraphs?: string[] }>,
+  text: string,
+  paragraphs?: { id: string; text: string }[],
+  options?: {
+    offset?: number
+    limit?: number
+  }
+): string {
+  let processedText = text
+  if (paragraphs && paragraphs.length > 0) {
+    processedText = paragraphs.map((p) => `[${p.id}] ${p.text.trim()}`).join('\n\n')
+  }
+
+  const relatedParagraphsField =
+    paragraphs && paragraphs.length > 0
+      ? `"relatedParagraphs": ["段落ID1", "段落ID2"],  // 该事件出现在哪些段落中`
+      : ''
+
+  const relatedParagraphsExample =
+    paragraphs && paragraphs.length > 0
+      ? `"relatedParagraphs": ["para-15", "para-16"],`
+      : ''
+
+  const relatedParagraphsRequirement =
+    paragraphs && paragraphs.length > 0
+      ? `
+8. **段落关联**：将每个事件关联到它出现的段落ID（relatedParagraphs字段），这对于阅读时的定位非常重要`
+      : ''
+
+  const formatNote =
+    paragraphs && paragraphs.length > 0
+      ? `\n\n**格式说明**：每段文本前标注了段落ID（格式为 \`[段落ID]\`），请在提取事件时，将事件关联到相关的段落ID（在 \`relatedParagraphs\` 字段中使用对应的段落ID）。\n\n`
+      : '\n\n'
+
+  // pageOverviews 已经是当前页的切片，所以应该返回所有事件的详细信息
+  const eventCount = eventOverviews.length
+  const startIndex = 1
+  const endIndex = eventCount
+
+  return `你是历史事件提取专家。请根据已有的事件概览列表，返回所有事件的详细信息。
+
+## 已有的事件概览列表（按时间顺序，共 ${eventCount} 个事件）
+
+${eventOverviews.map((e, idx) => {
+  const paraInfo = e.relatedParagraphs && e.relatedParagraphs.length > 0 
+    ? ` [段落: ${e.relatedParagraphs.join(', ')}]` 
+    : ''
+  return `${idx + 1}. ${e.name} (${e.timeRangeStart}, ${e.importance})${paraInfo}`
+}).join('\n')}
+
+## 输出格式（JSON）
+
+{
+  "eventDetails": [
+    // 返回列表中所有 ${eventCount} 个事件的详细信息（第 ${startIndex} 到第 ${endIndex} 个）
+    {
+      "name": "事件名称",
+      "type": "BATTLE|POLITICAL|PERSONAL|OTHER",
+      "timeRangeStart": "开始时间，必须使用公元纪年格式：
+        - 公元前：使用'-XX年'或'-XX-月'格式，如'-206年'、'-206-12'（表示公元前206年12月）
+        - 公元后：使用'XX年'或'XX-月'格式，如'25年'、'25-12'
+        - 不确定的年份：'约-206年'或'约25年'
+        
+        **重要：朝代纪年转换规则（以十月为岁首的朝代）**
+        
+        1. **秦朝（公元前221-前207年）和汉朝初期（公元前206-前104年）**：
+           这两个朝代都以十月为岁首（一年的开始是十月），转换时需注意：
+           - X年十月、十一月、十二月 = 该年号对应公元年份的10月、11月、12月
+           - X年一月到九月 = 该年号对应公元年份+1年的1月到9月
+           
+           关键年号对应：
+           - 秦始皇元年 = 公元前221年
+           - 秦二世元年 = 公元前209年
+           - 汉元年 = 公元前206年（刘邦称汉王）
+           
+           示例：
+           - 秦始皇二十六年十月 = 公元前221年10月
+           - 秦始皇二十六年一月 = 公元前220年1月
+           - 秦二世元年十月 = 公元前209年10月
+           - 秦二世元年一月 = 公元前208年1月
+           - 汉元年十月 = 公元前206年10月
+           - 汉元年一月 = 公元前205年1月
+           - 汉十二年四月 = 公元前195年4月
+           - 汉十二年十月 = 公元前196年10月
+        
+        2. **汉武帝太初元年（公元前104年）之后**：
+           岁首改为正月，月份直接对应，无需特殊转换。
+        
+        3. **其他朝代**：直接查找该年号对应的公元年份，月份直接对应。
+        
+        4. **不要使用朝代年号格式**：必须转换为公元纪年，不要使用'汉元年'、'秦二世元年'等格式",
+      "timeRangeEnd": "结束时间（可选），格式同上，如持续多年的战争",
+      "timePrecision": "EXACT_DATE|MONTH|SEASON|YEAR|DECADE|APPROXIMATE",
+      "locationName": "历史地名，格式要求：
+        - 单一地名：直接写地名，如'鸿门'
+        - 有别名或区域说明：使用'主地名 (别名/区域)'格式，如'鸿门 (戏)'表示鸿门是主地名，戏是别名或区域
+        - 多个地点：用逗号分隔，如'鸿门, 彭城'
+        - 括号内的内容将作为别名存储，用于关联Place数据表",
+      "locationModernName": "现代地名（如知道）",
+      "summary": "事件摘要（200-400字，要点式）",
+      "impact": "历史影响（100-200字，可选）",
+      "importance": "L1|L2|L3|L4|L5",
+      ${relatedParagraphsField}
+      "actors": [
+        {
+          "name": "人物姓名",
+          "roleType": "PROTAGONIST|ALLY|OPPOSING|ADVISOR|EXECUTOR|OBSERVER|OTHER",
+          "description": "此人在事件中的具体表现（50-100字）"
+        }
+      ]
+      // **注意**：actors 数组最多包含5个最重要的参与者，按重要性排序。如果参与者超过5个，只选择最重要的5个。
+    }
+  ]
+}
+
+## 要求
+
+1. **返回所有事件的详细信息**：必须返回列表中所有 ${eventCount} 个事件（第 ${startIndex} 到第 ${endIndex} 个）的完整信息
+2. **保持 importance 字段**：必须与概览列表中的重要程度一致
+3. **按时间顺序**：确保事件按 timeRangeStart 排序
+4. **完整性**：每个事件的详细信息必须完整，包括所有必需字段
+5. **参与者命名**：actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"）
+6. **参与者数量限制**：每个事件最多包含5个最重要的参与者，按重要性排序
+7. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
+8. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
+9. **严格停止要求**：输出完整的 JSON 对象后，必须以 \`}\` 结尾并立即停止。禁止在 JSON 之后添加任何内容，包括但不限于：
+   - 额外的代码块标记（如 \`\`\` 或 \`\`\`json）
+   - 解释性文字
+   - 说明性内容
+   - 任何其他文本
+
+## 待处理文本${formatNote}${processedText}
+
+请返回列表中所有 ${eventCount} 个事件的详细信息。
+
+**重要提醒**：输出完成后立即停止。JSON 对象以 \`}\` 结尾后，不要添加任何内容。`
+}
+
+/**
+ * 构建事件提取提示词（支持分页模式）
+ * @deprecated 使用 buildEventOverviewPrompt 和 buildEventDetailsPrompt 代替
  */
 export function buildEventPrompt(
   text: string,
-  paragraphs?: { id: string; text: string }[]
+  paragraphs?: { id: string; text: string }[],
+  options?: {
+    eventNames?: string[]  // 已有的事件名称列表（用于后续分页请求）
+    offset?: number        // 当前偏移量
+    limit?: number         // 每页数量
+  }
 ): string {
   // 如果有段落信息，将段落ID嵌入到文本中
   let processedText = text
@@ -44,26 +298,28 @@ export function buildEventPrompt(
       ? `\n\n**格式说明**：每段文本前标注了段落ID（格式为 \`[段落ID]\`），请在提取事件时，将事件关联到相关的段落ID（在 \`relatedParagraphs\` 字段中使用对应的段落ID）。\n\n`
       : '\n\n'
 
-  const importantReminder =
-    paragraphs && paragraphs.length > 0
-      ? `
+  const isPaginationRequest = options?.eventNames && options.eventNames.length > 0
+  const offset = options?.offset || 0
+  const limit = options?.limit || 25
 
-## 重要提醒
+  // 如果是分页请求，使用不同的输出格式
+  if (isPaginationRequest && options.eventNames) {
+    const eventNames = options.eventNames
+    const startIndex = offset + 1
+    const endIndex = Math.min(offset + limit, eventNames.length)
+    
+    return `你是历史事件提取专家。请根据已有的事件名称列表，返回指定范围内事件的详细信息。
 
-请严格按照上述格式和要求提取事件：
-- **只输出 JSON**，不要添加任何解释性文字
-- **使用人物本名**（如"刘邦"而非"高祖"或"沛公"）
-- **每个事件必须关联到相关段落ID**（relatedParagraphs字段），这对于阅读时的定位非常重要
-- **确保事件摘要完整**，不遗漏关键细节
-- **每批最多 50 个事件**（MVP 阶段），按重要性排序。如果事件超过 50 个，优先提取最重要的，并在 truncated 字段中列出未能详述的事件名称`
-      : ''
+## 已有的事件名称列表（按时间顺序）
 
-  return `你是历史事件提取专家。请从以下文本中提取重要历史事件。
+${eventNames.map((name, idx) => `${idx + 1}. ${name}`).join('\n')}
 
 ## 输出格式（JSON）
 
 {
-  "events": [
+  "eventNames": ${JSON.stringify(eventNames)},  // 完整的事件名称列表（保持不变）
+  "eventDetails": [
+    // 只返回第 ${startIndex} 到第 ${endIndex} 个事件的详细信息
     {
       "name": "事件名称",
       "type": "BATTLE|POLITICAL|PERSONAL|OTHER",
@@ -71,7 +327,35 @@ export function buildEventPrompt(
         - 公元前：使用'-XX年'或'-XX-月'格式，如'-206年'、'-206-12'（表示公元前206年12月）
         - 公元后：使用'XX年'或'XX-月'格式，如'25年'、'25-12'
         - 不确定的年份：'约-206年'或'约25年'
-        - 不要使用'汉元年'、'秦二世元年'等朝代年号格式",
+        
+        **重要：朝代纪年转换规则（以十月为岁首的朝代）**
+        
+        1. **秦朝（公元前221-前207年）和汉朝初期（公元前206-前104年）**：
+           这两个朝代都以十月为岁首（一年的开始是十月），转换时需注意：
+           - X年十月、十一月、十二月 = 该年号对应公元年份的10月、11月、12月
+           - X年一月到九月 = 该年号对应公元年份+1年的1月到9月
+           
+           关键年号对应：
+           - 秦始皇元年 = 公元前221年
+           - 秦二世元年 = 公元前209年
+           - 汉元年 = 公元前206年（刘邦称汉王）
+           
+           示例：
+           - 秦始皇二十六年十月 = 公元前221年10月
+           - 秦始皇二十六年一月 = 公元前220年1月
+           - 秦二世元年十月 = 公元前209年10月
+           - 秦二世元年一月 = 公元前208年1月
+           - 汉元年十月 = 公元前206年10月
+           - 汉元年一月 = 公元前205年1月
+           - 汉十二年四月 = 公元前195年4月
+           - 汉十二年十月 = 公元前196年10月
+        
+        2. **汉武帝太初元年（公元前104年）之后**：
+           岁首改为正月，月份直接对应，无需特殊转换。
+        
+        3. **其他朝代**：直接查找该年号对应的公元年份，月份直接对应。
+        
+        4. **不要使用朝代年号格式**：必须转换为公元纪年，不要使用'汉元年'、'秦二世元年'等格式",
       "timeRangeEnd": "结束时间（可选），格式同上，如持续多年的战争",
       "timePrecision": "EXACT_DATE|MONTH|SEASON|YEAR|DECADE|APPROXIMATE",
       "locationName": "历史地名，格式要求：
@@ -90,70 +374,174 @@ export function buildEventPrompt(
           "description": "此人在事件中的具体表现（50-100字）"
         }
       ]
+      // **注意**：actors 数组最多包含5个最重要的参与者，按重要性排序。如果参与者超过5个，只选择最重要的5个。
     }
   ],
-  "truncated": ["因篇幅限制未能详述的事件名称"]
+  "offset": ${offset},
+  "limit": ${limit}
+}
+
+## 要求
+
+1. **只返回指定范围的事件详情**：仅返回第 ${startIndex} 到第 ${endIndex} 个事件的完整信息
+2. **保持 eventNames 不变**：eventNames 字段必须与输入完全一致（最多50个事件）
+3. **按时间顺序**：确保事件按 timeRangeStart 排序
+4. **完整性**：每个事件的详细信息必须完整，包括所有必需字段
+5. **参与者命名**：actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"）
+6. **参与者数量限制**：每个事件最多包含5个最重要的参与者，按重要性排序。如果参与者超过5个，只选择最重要的5个
+7. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
+8. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
+
+## 待处理文本${formatNote}${processedText}
+
+请返回第 ${startIndex} 到第 ${endIndex} 个事件的详细信息。`
+  }
+
+  // 首次请求：返回所有事件名称 + 前 limit 个事件的详情
+  const importantReminder =
+    paragraphs && paragraphs.length > 0
+      ? `
+
+## 重要提醒
+
+请严格按照上述格式和要求提取事件：
+- **只输出 JSON**，不要添加任何解释性文字
+- **使用人物本名**（如"刘邦"而非"高祖"或"沛公"）
+- **每个事件必须关联到相关段落ID**（relatedParagraphs字段），这对于阅读时的定位非常重要
+- **确保事件摘要完整**，不遗漏关键细节
+- **按时间顺序排列事件**（根据 timeRangeStart）
+- **最多提取50个最重要的事件**（级别1-3），忽略级别4-5的小规模事件
+- **每个事件最多包含5个最重要的actors**，按重要性排序
+- **eventNames 包含所有筛选后的事件名称（最多50个）**，eventDetails 只包含前 ${limit} 个事件的详细信息`
+      : ''
+
+  return `你是历史事件提取专家。请从以下文本中提取重要历史事件。
+
+## 输出格式（JSON）
+
+{
+  "eventNames": [
+    "事件名称1",
+    "事件名称2",
+    // ... 所有事件名称，按时间顺序（timeRangeStart）排列
+  ],
+  "eventDetails": [
+    // 只返回前 ${limit} 个事件的详细信息
+    {
+      "name": "事件名称",
+      "type": "BATTLE|POLITICAL|PERSONAL|OTHER",
+      "timeRangeStart": "开始时间，必须使用公元纪年格式：
+        - 公元前：使用'-XX年'或'-XX-月'格式，如'-206年'、'-206-12'（表示公元前206年12月）
+        - 公元后：使用'XX年'或'XX-月'格式，如'25年'、'25-12'
+        - 不确定的年份：'约-206年'或'约25年'
+        
+        **重要：朝代纪年转换规则（以十月为岁首的朝代）**
+        
+        1. **秦朝（公元前221-前207年）和汉朝初期（公元前206-前104年）**：
+           这两个朝代都以十月为岁首（一年的开始是十月），转换时需注意：
+           - X年十月、十一月、十二月 = 该年号对应公元年份的10月、11月、12月
+           - X年一月到九月 = 该年号对应公元年份+1年的1月到9月
+           
+           关键年号对应：
+           - 秦始皇元年 = 公元前221年
+           - 秦二世元年 = 公元前209年
+           - 汉元年 = 公元前206年（刘邦称汉王）
+           
+           示例：
+           - 秦始皇二十六年十月 = 公元前221年10月
+           - 秦始皇二十六年一月 = 公元前220年1月
+           - 秦二世元年十月 = 公元前209年10月
+           - 秦二世元年一月 = 公元前208年1月
+           - 汉元年十月 = 公元前206年10月
+           - 汉元年一月 = 公元前205年1月
+           - 汉十二年四月 = 公元前195年4月
+           - 汉十二年十月 = 公元前196年10月
+        
+        2. **汉武帝太初元年（公元前104年）之后**：
+           岁首改为正月，月份直接对应，无需特殊转换。
+        
+        3. **其他朝代**：直接查找该年号对应的公元年份，月份直接对应。
+        
+        4. **不要使用朝代年号格式**：必须转换为公元纪年，不要使用'汉元年'、'秦二世元年'等格式",
+      "timeRangeEnd": "结束时间（可选），格式同上，如持续多年的战争",
+      "timePrecision": "EXACT_DATE|MONTH|SEASON|YEAR|DECADE|APPROXIMATE",
+      "locationName": "历史地名，格式要求：
+        - 单一地名：直接写地名，如'鸿门'
+        - 有别名或区域说明：使用'主地名 (别名/区域)'格式，如'鸿门 (戏)'表示鸿门是主地名，戏是别名或区域
+        - 多个地点：用逗号分隔，如'鸿门, 彭城'
+        - 括号内的内容将作为别名存储，用于关联Place数据表",
+      "locationModernName": "现代地名（如知道）",
+      "summary": "事件摘要（200-400字，要点式）",
+      "impact": "历史影响（100-200字，可选）",
+      ${relatedParagraphsField}
+      "actors": [
+        {
+          "name": "人物姓名",
+          "roleType": "PROTAGONIST|ALLY|OPPOSING|ADVISOR|EXECUTOR|OBSERVER|OTHER",
+          "description": "此人在事件中的具体表现（50-100字）"
+        }
+      ]
+      // **注意**：actors 数组最多包含5个最重要的参与者，按重要性排序。如果参与者超过5个，只选择最重要的5个。
+    }
+  ],
+  "offset": 0,
+  "limit": ${limit}
 }
 
 ## 示例输出
 
 {
-  "events": [
+  "eventNames": [
+    "刘邦观秦始皇",
+    "吕公嫁女于刘邦",
+    "鸿门宴"
+  ],
+  "eventDetails": [
     {
-      "name": "鸿门宴",
-      "type": "POLITICAL",
-      "timeRangeStart": "-206年",
+      "name": "刘邦观秦始皇",
+      "type": "PERSONAL",
+      "timeRangeStart": "-210年",
       "timeRangeEnd": null,
-      "timePrecision": "YEAR",
-      "locationName": "鸿门",
-      "locationModernName": "陕西省西安市临潼区",
-      "summary": "项羽在鸿门设宴邀请刘邦。范增多次示意项羽杀掉刘邦，但项羽犹豫不决。张良事先得知消息，樊哙闯入护卫。刘邦借如厕之机逃脱，标志着楚汉之争正式开始。",
-      "impact": "刘邦成功脱险，保存实力，为日后反败为胜奠定基础。楚汉矛盾公开化，天下进入新的争霸格局。",
+      "timePrecision": "APPROXIMATE",
+      "locationName": "咸阳",
+      "locationModernName": null,
+      "summary": "刘邦在咸阳时，曾远观秦始皇帝出游的盛况，感叹道："嗟乎，大丈夫当如此也！"此言显露了其非凡的抱负和建立功业的志向。",
+      "impact": null,
       ${relatedParagraphsExample}
       "actors": [
         {
           "name": "刘邦",
           "roleType": "PROTAGONIST",
-          "description": "宴会主要当事人，表面恭顺，暗中寻机脱身，展现其灵活圆滑的处事风格"
-        },
-        {
-          "name": "项羽",
-          "roleType": "PROTAGONIST",
-          "description": "宴会主办者，虽有除掉刘邦之机，但因优柔寡断未能下手"
-        },
-        {
-          "name": "范增",
-          "roleType": "ADVISOR",
-          "description": "项羽谋士，多次暗示项羽杀刘邦，举玉玦示意，但计谋未被采纳"
-        },
-        {
-          "name": "张良",
-          "roleType": "ADVISOR",
-          "description": "刘邦谋士，提前获取情报，安排樊哙护驾，帮助刘邦脱身"
-        },
-        {
-          "name": "樊哙",
-          "roleType": "EXECUTOR",
-          "description": "刘邦部将，持剑闯入宴会护卫刘邦，以豪迈之态震慑项羽"
+          "description": "观秦始皇出游，发出大丈夫当如此的感慨，表明其远大志向。"
         }
       ]
     }
   ],
-  "truncated": []
+  "offset": 0,
+  "limit": ${limit}
 }
 
 ## 提取要求
 
-1. **事件选择**：提取文本中的重要历史事件，每批最多 50 个事件（MVP 阶段），按重要性排序
-   - 如果文本中的事件超过 50 个，请优先提取最重要的 50 个，并在 truncated 字段中列出未能详述的事件名称
-   - 如果事件数量在 50 个以内，请全部提取，truncated 字段应为空数组
-2. **时间精度**：根据文本描述选择合适的时间精度
-3. **参与者命名**：
+1. **事件选择与重要性筛选**：
+   - **最多提取50个最重要的事件**，按时间顺序（timeRangeStart）排列，放入 eventNames 数组
+   - **重要性分级标准**（1-5级，只提取1-3级）：
+     - **级别1（对历史走向有重大影响）**：改朝换代、重大战役、关键决策、影响历史进程的重大事件
+     - **级别2（对局势有重大影响）**：重要政治事件、重大军事行动、影响地区或国家局势的事件
+     - **级别3（对人物有重大影响）**：重要人物生死、关键转折点、影响主要人物命运的事件
+     - **级别4（中等规模事件）**：一般战役、次要政治事件、局部冲突等（不提取）
+     - **级别5（小规模事件）**：个人琐事、日常事务、无关紧要的事件（不提取）
+   - **只提取级别1-3的事件**，级别4-5的事件应忽略
+   - 如果文本中的事件超过50个，优先提取最重要的50个（级别1-3）
+2. **事件详情**：只返回前 ${limit} 个事件的完整详细信息，放入 eventDetails 数组
+3. **时间精度**：根据文本描述选择合适的时间精度
+4. **参与者命名**：
    - actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"）
    - 如果文本中只出现封号/谥号，请推断其本名
    - 这有助于后续的人物去重和关联
-4. **参与者角色**：详细描述每个重要人物在事件中的角色和表现
-5. **角色类型说明**：
+5. **参与者数量限制**：每个事件最多包含5个最重要的参与者，按重要性排序。如果参与者超过5个，只选择最重要的5个
+6. **参与者角色**：详细描述每个重要人物在事件中的角色和表现
+7. **角色类型说明**：
    - PROTAGONIST: 事件主角
    - ALLY: 同盟/支持方
    - OPPOSING: 对立/敌对方
@@ -161,8 +549,8 @@ export function buildEventPrompt(
    - EXECUTOR: 执行者/部将
    - OBSERVER: 旁观者/见证者
    - OTHER: 其他
-6. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
-7. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
+8. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
+9. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
 
 ## 待处理文本${formatNote}${processedText}${importantReminder}
 `
@@ -172,7 +560,7 @@ export function buildEventPrompt(
  * 事件提取系统提示词
  */
 export function eventSystemPrompt(): string {
-  return '你是专业的历史文献分析专家，擅长从古文中提取结构化的历史事件信息。请严格按照 JSON 格式输出，不要添加任何解释性文字。'
+  return '你是专业的历史文献分析专家，擅长从古文中提取结构化的历史事件信息。请严格按照 JSON 格式输出，不要添加任何解释性文字。输出完整的 JSON 对象后必须立即停止，禁止在 JSON 之后添加任何内容。'
 }
 
 // ============================================

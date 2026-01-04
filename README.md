@@ -167,31 +167,67 @@ dushu/
 └── README.md          # 项目说明
 ```
 
-## Python 环境设置（数据准备工具）
+## 数据准备工具
 
-项目中的数据准备脚本（Playwright 下载、LLM 提取）需要 Python 环境。
+项目中的数据准备脚本包括：
 
-### 首次设置
+### Node.js 脚本（文本下载和预处理）
+
+文本下载和预处理脚本使用 Node.js：
 
 ```bash
-# 运行设置脚本（会自动创建虚拟环境并安装依赖）
-./scripts/setup_python_env.sh
+# 安装依赖（如果还没有）
+npm install
+npx playwright install chromium
+
+# 使用下载脚本
+node scripts/download_with_playwright.js \
+  --url "https://zh.wikisource.org/wiki/史記/卷008" \
+  --output "data/raw/shiji/shiji_01_gaozu_benji.txt" \
+  --book "史记" \
+  --chapter "高祖本纪"
+
+# 使用预处理脚本
+node scripts/preprocess_text.js \
+  --input "data/raw/shiji/shiji_01_gaozu_benji.txt" \
+  --output "data/processed/chapters/shiji_01_gaozu_benji.json" \
+  --book "史记" \
+  --chapter "高祖本纪"
 ```
 
-### 使用虚拟环境
+**或使用自动脚本**：
+```bash
+./scripts/download_first_chapter_auto.sh
+```
+
+### Node.js 脚本（文本预处理）
+
+文本预处理脚本使用 Node.js：
 
 ```bash
-# 激活虚拟环境
+# 使用预处理脚本
+node scripts/preprocess_text.js \
+  --input "data/raw/shiji/shiji_01_gaozu_benji.txt" \
+  --output "data/processed/chapters/shiji_01_gaozu_benji.json" \
+  --book "史记" \
+  --chapter "高祖本纪"
+```
+
+### Python 脚本（LLM 提取）
+
+LLM 提取脚本需要 Python 环境：
+
+```bash
+# 创建虚拟环境（如果还没有）
+python3 -m venv venv
 source venv/bin/activate
+pip install -r scripts/requirements.txt
 
 # 运行 Python 脚本
-python scripts/download_with_playwright.py ...
-
-# 退出虚拟环境
-deactivate
+python scripts/extract_with_llm.py ...
 ```
 
-**注意**：便捷脚本（如 `download_first_chapter_auto.sh`）会自动激活虚拟环境，无需手动激活。
+**注意**：便捷脚本（如 `extract_data.sh`）会自动激活虚拟环境，无需手动激活。
 
 ## 可用脚本
 
@@ -239,7 +275,7 @@ deactivate
 - **[docs/setup/QUICK_START.md](./docs/setup/QUICK_START.md)** - 快速开始指南
 - **[docs/data/DATA_SOURCES.md](./docs/data/DATA_SOURCES.md)** - 数据来源说明
 - **[docs/data/RECOMMENDED_BOOKS.md](./docs/data/RECOMMENDED_BOOKS.md)** - 推荐书籍
-- **[scripts/prepare_data.md](./scripts/prepare_data.md)** - 数据准备流程（快速参考）
+- **[docs/OPERATION_MANUAL.md](./docs/OPERATION_MANUAL.md)** - 完整操作手册（数据准备到发布）
 - **[scripts/INCREMENTAL_WORKFLOW.md](./scripts/INCREMENTAL_WORKFLOW.md)** - 渐进式工作流指南
 
 ### 开发文档
@@ -265,6 +301,6 @@ deactivate
 
 **数据准备流程**：
 - 技术规范：请查看 [specs/data-acquisition-and-merge-spec.md](./specs/data-acquisition-and-merge-spec.md)
-- 操作指南：请查看 [scripts/prepare_data.md](./scripts/prepare_data.md) 和 [scripts/INCREMENTAL_WORKFLOW.md](./scripts/INCREMENTAL_WORKFLOW.md)
+- 操作指南：请查看 [docs/OPERATION_MANUAL.md](./docs/OPERATION_MANUAL.md) 和 [scripts/INCREMENTAL_WORKFLOW.md](./scripts/INCREMENTAL_WORKFLOW.md)
 
 **测试指南**：请查看 [docs/testing/TESTING.md](./docs/testing/TESTING.md)

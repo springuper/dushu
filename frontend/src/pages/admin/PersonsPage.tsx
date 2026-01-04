@@ -26,7 +26,7 @@ import {
   Tabs,
 } from '@mantine/core'
 import { api } from '../../lib/api'
-import { IconEdit, IconTrash, IconPlus, IconEye, IconUserSearch, IconArrowMerge } from '@tabler/icons-react'
+import { IconEdit, IconTrash, IconPlus, IconEye, IconUserSearch, IconArrowMerge, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
 // 角色选项
@@ -538,6 +538,8 @@ function PersonEditModal({ personId, onClose }: { personId: string | null; onClo
 
 // 人物详情 Modal（包含参与的事件）
 function PersonDetailModal({ personId, onClose }: { personId: string | null; onClose: () => void }) {
+  const [expandedBiography, setExpandedBiography] = useState(false)
+
   const { data: person, isLoading } = useQuery({
     queryKey: ['person', personId],
     queryFn: async () => {
@@ -546,6 +548,12 @@ function PersonDetailModal({ personId, onClose }: { personId: string | null; onC
     },
     enabled: !!personId,
   })
+
+  // 判断内容是否需要展开（超过约150字符或包含换行）
+  const needsExpand = (text: string | null | undefined) => {
+    if (!text) return false
+    return text.length > 150 || text.includes('\n')
+  }
 
   const { data: events } = useQuery({
     queryKey: ['person-events', personId],
@@ -600,7 +608,29 @@ function PersonDetailModal({ personId, onClose }: { personId: string | null; onC
                 </Group>
               )}
               <Divider label="传记" labelPosition="left" />
-              <Text size="sm">{person.biography}</Text>
+              <Stack gap="xs">
+                <Text 
+                  size="sm" 
+                  style={{ 
+                    lineClamp: expandedBiography ? undefined : 3,
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {person.biography}
+                </Text>
+                {needsExpand(person.biography) && (
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    compact
+                    leftSection={expandedBiography ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                    onClick={() => setExpandedBiography(!expandedBiography)}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    {expandedBiography ? '收起' : '展开全部'}
+                  </Button>
+                )}
+              </Stack>
             </Stack>
           </Tabs.Panel>
 

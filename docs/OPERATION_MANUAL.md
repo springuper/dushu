@@ -1,22 +1,77 @@
 # 数据提取与发布操作手册
 
-> **快速参考指南**：本文档提供数据提取和发布的完整操作流程，适合日常使用。
+> **完整操作指南**：本文档提供从数据准备到发布的完整操作流程，适合日常使用。  
+> **技术规范**：详细技术规范请参考 [数据获取与融合规格书](../specs/data-acquisition-and-merge-spec.md)
 
 ---
 
 ## 📋 目录
 
-1. [快速开始](#快速开始)
-2. [完整流程](#完整流程)
-3. [详细步骤](#详细步骤)
-4. [常见问题](#常见问题)
-5. [最佳实践](#最佳实践)
+1. [前置要求](#前置要求)
+2. [快速开始](#快速开始)
+3. [完整流程](#完整流程)
+4. [详细步骤](#详细步骤)
+5. [推荐章节](#推荐章节)
+6. [常见问题](#常见问题)
+7. [最佳实践](#最佳实践)
+
+---
+
+## 前置要求
+
+### 环境设置
+
+1. **Node.js 环境**
+   ```bash
+   # 安装依赖
+   npm install
+   
+   # 安装 Playwright 浏览器（用于下载脚本）
+   npx playwright install chromium
+   ```
+
+2. **Python 环境**（用于 LLM 提取脚本，可选）
+   ```bash
+   # 创建虚拟环境
+   python3 -m venv venv
+   source venv/bin/activate
+   
+   # 安装依赖
+   pip install -r scripts/requirements.txt
+   ```
+   
+   **注意**：如果使用系统内的提取功能（推荐），可以跳过 Python 环境设置。
+
+3. **API Key 配置**（用于系统内提取）
+   ```bash
+   # 使用设置脚本
+   ./scripts/setup_env.sh
+   
+   # 或手动编辑 .env 文件
+   # 设置 GOOGLE_API_KEY 或 OPENAI_API_KEY
+   ```
+   
+   **推荐使用 Google Gemini**：
+   - ✅ 免费额度更慷慨
+   - ✅ 中文支持优秀
+   - ✅ 速度快、成本低
+   
+   详细设置请参考：[Google Gemini API 设置](../scripts/GEMINI_SETUP.md)
+
+### 服务启动
+
+确保以下服务已启动：
+- ✅ 数据库（`podman compose up -d`）
+- ✅ 后端服务（`npm run dev:backend`）
+- ✅ 前端服务（`npm run dev:frontend`）
 
 ---
 
 ## 🚀 快速开始
 
 ### 最简单的流程（3 步）
+
+如果已有预处理好的章节 JSON 文件：
 
 ```
 1. 上传章节 → 2. 提取数据 → 3. 批量审核
@@ -69,75 +124,87 @@
 使用 Playwright 脚本自动从维基文库下载：
 
 ```bash
-python scripts/download_with_playwright.py \
+# 使用便捷脚本（推荐，一键完成下载和预处理）
+./scripts/download_first_chapter_auto.sh
+
+# 或手动运行下载脚本
+node scripts/download_with_playwright.js \
   --url "https://zh.wikisource.org/wiki/史記/卷008" \
-  --output data/raw/shiji/shiji_01_gaozu_benji.txt \
+  --output "data/raw/shiji/shiji_01_gaozu_benji.txt" \
   --book "史记" \
   --chapter "高祖本纪"
 ```
 
 **参数说明**：
-- `--url`: 维基文库页面 URL
-- `--output`: 输出文件路径
+- `--url`: 维基文库页面 URL（必需）
+- `--output`: 输出文件路径（必需）
 - `--book`: 书籍名称（可选）
 - `--chapter`: 章节名称（可选）
 
 **前提条件**：
-- 安装 Playwright：`pip install playwright`
-- 安装浏览器：`playwright install chromium`
-
-**快速示例**（下载《史记·高祖本纪》）：
-```bash
-# 使用自动脚本（推荐）
-./scripts/download_first_chapter_auto.sh
-
-# 或手动运行
-python scripts/download_with_playwright.py \
-  --url "https://zh.wikisource.org/wiki/史記/卷008" \
-  --output data/raw/shiji/shiji_01_gaozu_benji.txt \
-  --book "史记" \
-  --chapter "高祖本纪"
-```
+- 已安装 Node.js 依赖：`npm install`
+- 已安装 Playwright 浏览器：`npx playwright install chromium`
 
 **方法 2：手动下载**
 
-从以下来源获取历史文本：
-- **维基文库**：https://zh.wikisource.org
-- **中国哲学书电子化计划**：https://ctext.org
+如果自动下载失败，可以手动下载：
 
-手动复制内容并保存为 UTF-8 编码的文本文件，路径：`data/raw/{book}/{book}_{chapter}_{title}.txt`
+1. 访问维基文库：https://zh.wikisource.org
+2. 搜索书籍（如"史记"）
+3. 选择具体章节
+4. 复制文本内容
+5. 保存为 UTF-8 编码的文本文件
 
 **文件格式要求**：
-文件开头应包含来源信息：
+- 编码：UTF-8
+- 格式：段落之间用空行分隔
+- 位置：`data/raw/{book}/` 目录
+- 命名：`{book}_{chapter}_{title}.txt`
+
+**文件开头建议包含**：
 ```
 来源：《史记·高祖本纪》
 获取渠道：维基文库
 URL：https://zh.wikisource.org/wiki/史記/卷008
-获取日期：2024-12-08
+获取日期：2024-12-01
 版权状态：公共领域（Public Domain）
+
+---
+
+# 高祖本纪
+
+[段落内容]
 ```
+
+**数据来源**：
+- 📖 [维基文库](https://zh.wikisource.org) - 免费古籍文本
+- 📖 [中国哲学书电子化计划](https://ctext.org) - 高质量古籍资源
 
 #### 1.2 预处理（生成结构化 JSON）
 
 使用预处理脚本将原始文本转换为结构化 JSON：
 
 ```bash
-python scripts/preprocess_text.py \
-  --input data/raw/shiji/shiji_01_gaozu_benji.txt \
-  --output data/processed/chapters/shiji_01_gaozu_benji.json \
+node scripts/preprocess_text.js \
+  --input "data/raw/shiji/shiji_01_gaozu_benji.txt" \
+  --output "data/processed/chapters/shiji_01_gaozu_benji.json" \
   --book "史记" \
   --chapter "高祖本纪" \
   --url "https://zh.wikisource.org/wiki/史記/卷008"
 ```
 
 **参数说明**：
-- `--input`: 原始文本文件路径
-- `--output`: 输出 JSON 文件路径
+- `--input`: 输入文本文件路径（必需）
+- `--output`: 输出 JSON 文件路径（必需）
 - `--book`: 书籍名称（可选）
 - `--chapter`: 章节名称（可选）
 - `--url`: 来源 URL（可选）
 
-**输出格式**：
+**脚本功能**：
+- ✅ 提取章节标题
+- ✅ 按段落分割文本
+- ✅ 为每个段落添加编号和 ID
+- ✅ 生成标准 JSON 格式
 
 **输出格式**：
 ```json
@@ -158,19 +225,11 @@ python scripts/preprocess_text.py \
 }
 ```
 
-**一键完成步骤 1.1 和 1.2**：
-
-如果使用自动脚本，可以一次性完成下载和预处理：
-
-```bash
-# 下载并预处理《史记·高祖本纪》
-./scripts/download_first_chapter_auto.sh
+**预期输出**：
 ```
-
-这个脚本会：
-1. 自动下载原始文本
-2. 自动预处理生成 JSON
-3. 保存到 `data/processed/chapters/` 目录
+✅ 处理完成：XX 个段落
+   输出文件：data/processed/chapters/shiji_01_gaozu_benji.json
+```
 
 ---
 
@@ -178,7 +237,7 @@ python scripts/preprocess_text.py \
 
 #### 2.1 创建书籍（如果还没有）
 
-1. 登录管理后台
+1. 登录管理后台：http://localhost:5173/admin/login
 2. 进入 **内容管理 → 书籍管理**
 3. 点击 **新建书籍**
 4. 填写书籍信息：
@@ -213,7 +272,8 @@ python scripts/preprocess_text.py \
 3. 选择章节（从下拉框选择）
 
 #### 3.2 提取模式（混合，事件为中心）
-- 系统默认使用“事件联合抽取 + 人物/地点补全 + 对齐消歧”，无需勾选类型。
+
+- 系统默认使用"事件联合抽取 + 人物/地点补全 + 对齐消歧"，无需勾选类型。
 - 每批事件上限 30，人物/地点上限 60；超出会按重要性截断并在结果中标记长尾。
 - 文本分段：约 4k-6k tokens（长章 8k-12k），防止超长输入稀释注意力。
 - 默认模型：Gemini `gemini-2.5-flash`，温度 0.3。
@@ -275,6 +335,26 @@ python scripts/preprocess_text.py \
 
 ---
 
+## 📚 推荐章节
+
+### 史记
+
+- 高祖本纪：https://zh.wikisource.org/wiki/史記/卷008
+- 项羽本纪：https://zh.wikisource.org/wiki/史記/卷007
+- 秦始皇本纪：https://zh.wikisource.org/wiki/史記/卷006
+- 萧相国世家：https://zh.wikisource.org/wiki/史記/卷053
+- 留侯世家：https://zh.wikisource.org/wiki/史記/卷055
+- 淮阴侯列传：https://zh.wikisource.org/wiki/史記/卷092
+
+### 汉书
+
+- 高帝纪：https://zh.wikisource.org/wiki/漢書/卷001上
+- 惠帝纪：https://zh.wikisource.org/wiki/漢書/卷002
+- 文帝纪：https://zh.wikisource.org/wiki/漢書/卷004
+- 萧何传：https://zh.wikisource.org/wiki/漢書/卷039
+
+---
+
 ## ❓ 常见问题
 
 ### Q1: 如何快速获取章节数据？
@@ -288,10 +368,25 @@ python scripts/preprocess_text.py \
 ```
 
 **手动方法**：
-1. 使用下载脚本：`python scripts/download_with_playwright.py --url "..." --output "..."`
-2. 使用预处理脚本：`python scripts/preprocess_text.py --input "..." --output "..."`
+1. 使用下载脚本：`node scripts/download_with_playwright.js --url "..." --output "..."`
+2. 使用预处理脚本：`node scripts/preprocess_text.js --input "..." --output "..."`
 
-### Q2: 提取失败怎么办？
+### Q2: 下载脚本失败怎么办？
+
+A: 
+1. 检查网络连接
+2. 确认 URL 是否正确
+3. 尝试手动下载
+4. 检查 Playwright 是否正确安装：`npx playwright install chromium`
+
+### Q3: 预处理脚本报错？
+
+A:
+1. 检查文件编码（必须是 UTF-8）
+2. 检查文件格式（段落用空行分隔）
+3. 检查文件路径是否正确
+
+### Q4: 提取失败怎么办？
 
 **可能原因**：
 - LLM API 配置错误
@@ -302,18 +397,9 @@ python scripts/preprocess_text.py \
 1. 检查环境变量（`OPENAI_API_KEY` 或 `GOOGLE_API_KEY`）
 2. 检查网络连接
 3. 重试提取
-4. 如果章节过长，可以分段处理
+4. 如果章节过长，系统会自动分段处理
 
-### Q3: 如何清理旧的提取数据？
-
-**操作**：
-- 运行清理脚本（需要 ts-node）：  
-  ```bash
-  npx ts-node backend/scripts/cleanup_old_extraction.ts
-  ```
-- 将删除 `source` 为 `LLM_EXTRACT` 的 ReviewItem；已发布数据不受影响。
-
-### Q4: 提取时间太长怎么办？
+### Q5: 提取时间太长怎么办？
 
 **说明**：
 - 大章节提取可能需要 5-10 分钟
@@ -325,7 +411,16 @@ python scripts/preprocess_text.py \
 - 不要关闭页面
 - 如果超时，可以重试
 
-### Q5: 审核通过后数据在哪里？
+### Q6: 如何清理旧的提取数据？
+
+**操作**：
+- 运行清理脚本（需要 ts-node）：  
+  ```bash
+  npx ts-node backend/scripts/cleanup_old_extraction.ts
+  ```
+- 将删除 `source` 为 `LLM_EXTRACT` 的 ReviewItem；已发布数据不受影响。
+
+### Q7: 审核通过后数据在哪里？
 
 **答案**：
 - 人物数据：**内容管理 → 人物管理**
@@ -335,7 +430,7 @@ python scripts/preprocess_text.py \
 
 所有数据状态为 `PUBLISHED`，可以直接使用。
 
-### Q6: 如何修改已发布的数据？
+### Q8: 如何修改已发布的数据？
 
 **方法**：
 1. 进入对应的管理页面（如人物管理）
@@ -345,7 +440,7 @@ python scripts/preprocess_text.py \
 
 **注意**：修改会记录到变更日志中。
 
-### Q7: 批量审核时如何知道哪些数据会合并？
+### Q9: 批量审核时如何知道哪些数据会合并？
 
 **说明**：
 - 系统会自动检测重复
@@ -356,6 +451,28 @@ python scripts/preprocess_text.py \
 **建议**：
 - 批量通过前可以先查看单个 ReviewItem 的详情
 - 确认融合结果后再批量操作
+
+### Q10: LLM 提取的数据不准确？
+
+A:
+1. 检查原始文本质量
+2. 优化提示词（修改后端代码中的 prompt）
+3. 使用更高质量的模型（如 `gemini-1.5-pro`）
+4. 人工 Review 修正
+
+### Q11: 如何提高提取准确率？
+
+A:
+1. **分段提取**：系统会自动分段，长章会分成多段处理
+2. **交叉验证**：对比不同书籍的数据，确保准确性
+3. **人工审核**：所有数据都需要人工 Review
+
+### Q12: API Key 设置问题？
+
+A:
+1. 确认 `.env` 文件在项目根目录
+2. 确认环境变量名称正确（`GOOGLE_API_KEY` 或 `OPENAI_API_KEY`）
+3. 确认 API Key 有效（未过期、有额度）
 
 ---
 
@@ -373,9 +490,19 @@ python scripts/preprocess_text.py \
 - 及时发现和解决问题
 - 保持数据质量
 
+### 2. 数据准备
+
+**小批量处理**：
+- 每次处理 1-2 个章节，不要一次性处理太多
+- 确保每个章节的数据质量
+
+**文件管理**：
+- 保持文件命名规范：`{book}_{chapter}_{title}.txt`
+- 及时备份原始文本和预处理后的 JSON
+
 ### 3. 提取模式选择
 
-- 默认使用“事件联合 + 人物/地点补全 + 对齐消歧”混合模式，无需手动勾选类型。
+- 默认使用"事件联合 + 人物/地点补全 + 对齐消歧"混合模式，无需手动勾选类型。
 - 每批事件≤30，人物/地点≤60；截断的长尾会被标记，后续可单独补抽。
 - 如果章节极短，可接受一次性输出；长章建议保持分段，便于并行与重试。
 
@@ -407,6 +534,12 @@ python scripts/preprocess_text.py \
 2. 在对应的管理页面修改已发布的数据
 3. 或者删除错误数据后重新提取
 
+### 7. 持续改进
+
+- **记录问题**：记录提取和审核中发现的问题，持续改进
+- **版本控制**：对提取的数据进行版本管理，便于回溯
+- **交叉验证**：对比不同书籍的数据，确保准确性
+
 ---
 
 ## 📊 数据统计
@@ -431,12 +564,23 @@ python scripts/preprocess_text.py \
 ## 🔗 相关文档
 
 - [数据获取与融合规格书](../specs/data-acquisition-and-merge-spec.md) - 详细技术规范
+- [渐进式工作流指南](../scripts/INCREMENTAL_WORKFLOW.md) - 适合第一次使用
 - [快速开始指南](./setup/QUICK_START.md) - 环境设置
 - [数据来源说明](./data/DATA_SOURCES.md) - 数据来源和版权
+- [推荐书籍](./data/RECOMMENDED_BOOKS.md) - 推荐的历史书籍
+- [Google Gemini API 设置](../scripts/GEMINI_SETUP.md) - API Key 配置
 
 ---
 
 ## 📝 更新日志
+
+### v2.1 (2024-12-08)
+
+- ✅ 整合数据准备完整指南
+- ✅ 添加前置要求章节
+- ✅ 扩展数据准备步骤说明
+- ✅ 添加推荐章节列表
+- ✅ 完善常见问题和最佳实践
 
 ### v2.0 (2024-12-08)
 
@@ -448,5 +592,4 @@ python scripts/preprocess_text.py \
 ---
 
 **最后更新**：2024-12-08  
-**版本**：2.0
-
+**版本**：2.1

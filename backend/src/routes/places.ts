@@ -30,7 +30,6 @@ router.get('/', requireAuth, async (req, res) => {
       status,
       source,
       search,
-      verified,
       page = '1',
       pageSize = '20',
       sortBy = 'createdAt',
@@ -40,7 +39,6 @@ router.get('/', requireAuth, async (req, res) => {
     const where: any = {}
     if (status) where.status = status
     if (source) where.source = source
-    if (verified !== undefined) where.verified = verified === 'true'
 
     if (search) {
       where.OR = [
@@ -124,7 +122,6 @@ router.post('/', requireAuth, async (req, res) => {
       timeRangeBegin,
       timeRangeEnd,
       status = 'DRAFT',
-      verified = false,
       sourceChapterIds = [],
     } = req.body
 
@@ -150,7 +147,6 @@ router.post('/', requireAuth, async (req, res) => {
         timeRangeBegin,
         timeRangeEnd,
         status: status as ContentStatus,
-        verified: Boolean(verified),
         sourceChapterIds: Array.isArray(sourceChapterIds) ? sourceChapterIds : [],
       },
     })
@@ -207,7 +203,6 @@ router.put('/:id', requireAuth, async (req, res) => {
       timeRangeBegin,
       timeRangeEnd,
       status,
-      verified,
       sourceChapterIds,
     } = req.body
 
@@ -228,7 +223,6 @@ router.put('/:id', requireAuth, async (req, res) => {
     if (timeRangeBegin !== undefined) updateData.timeRangeBegin = timeRangeBegin
     if (timeRangeEnd !== undefined) updateData.timeRangeEnd = timeRangeEnd
     if (status !== undefined) updateData.status = status as ContentStatus
-    if (verified !== undefined) updateData.verified = Boolean(verified)
     if (sourceChapterIds !== undefined) updateData.sourceChapterIds = Array.isArray(sourceChapterIds) ? sourceChapterIds : []
 
     const updatedPlace = await prisma.place.update({

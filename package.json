@@ -19,7 +19,10 @@
     "format:backend": "cd backend && npm run format"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "commander": "^11.1.0",
+    "concurrently": "^9.1.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.40.0"
   },
   "engines": {
     "node": ">=18.0.0",

@@ -23,7 +23,7 @@ import {
   Divider,
   Code,
 } from '@mantine/core'
-import { IconEdit, IconPlus, IconTrash, IconEye } from '@tabler/icons-react'
+import { IconEdit, IconPlus, IconTrash, IconEye, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { api } from '../../lib/api'
 
 // 事件类型选项
@@ -103,6 +103,8 @@ function EventsPage() {
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [editing, setEditing] = useState<EventItem | null>(null)
   const [viewing, setViewing] = useState<EventItem | null>(null)
+  const [expandedSummary, setExpandedSummary] = useState(false)
+  const [expandedImpact, setExpandedImpact] = useState(false)
   
   const [form, setForm] = useState({
     name: '',
@@ -225,6 +227,8 @@ function EventsPage() {
   const openDetail = (item: EventItem) => {
     setViewing(item)
     setDetailModalOpen(true)
+    setExpandedSummary(false)
+    setExpandedImpact(false)
   }
 
   const handleSave = () => {
@@ -284,6 +288,12 @@ function EventsPage() {
   const formatActorRole = (value: string) => {
     const item = actorRoleOptions.find((o) => o.value === value)
     return item?.label || value
+  }
+
+  // 判断内容是否需要展开（超过约150字符或包含换行）
+  const needsExpand = (text: string | null | undefined) => {
+    if (!text) return false
+    return text.length > 150 || text.includes('\n')
   }
 
   return (
@@ -641,12 +651,56 @@ function EventsPage() {
             </Group>
             
             <Divider label="摘要" labelPosition="left" />
-            <Text size="sm">{viewing.summary}</Text>
+            <Stack gap="xs">
+              <Text 
+                size="sm" 
+                style={{ 
+                  lineClamp: expandedSummary ? undefined : 3,
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {viewing.summary}
+              </Text>
+              {needsExpand(viewing.summary) && (
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  compact
+                  leftSection={expandedSummary ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                  onClick={() => setExpandedSummary(!expandedSummary)}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  {expandedSummary ? '收起' : '展开全部'}
+                </Button>
+              )}
+            </Stack>
             
             {viewing.impact && (
               <>
                 <Divider label="影响" labelPosition="left" />
-                <Text size="sm">{viewing.impact}</Text>
+                <Stack gap="xs">
+                  <Text 
+                    size="sm" 
+                    style={{ 
+                      lineClamp: expandedImpact ? undefined : 3,
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {viewing.impact}
+                  </Text>
+                  {needsExpand(viewing.impact) && (
+                    <Button
+                      variant="subtle"
+                      size="xs"
+                      compact
+                      leftSection={expandedImpact ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                      onClick={() => setExpandedImpact(!expandedImpact)}
+                      style={{ alignSelf: 'flex-start' }}
+                    >
+                      {expandedImpact ? '收起' : '展开全部'}
+                    </Button>
+                  )}
+                </Stack>
               </>
             )}
             

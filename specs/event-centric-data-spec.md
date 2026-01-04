@@ -173,6 +173,9 @@ model Event {
   // 格式：[{ personId, name, roleType, description }]
   actors            Json          @default("[]")
   
+  // 重要程度（用于事件筛选和排序）
+  importance        String?       // 'L1' | 'L2' | 'L3' | 'L4' | 'L5'
+  
   // 来源追踪
   chapterId         String        // 首次提取自哪个章节
   chapter           Chapter       @relation(fields: [chapterId], references: [id])
@@ -187,6 +190,7 @@ model Event {
   @@index([type])
   @@index([chapterId])
   @@index([timeRangeStart])
+  @@index([importance])
 }
 
 enum EventType {
@@ -253,9 +257,43 @@ enum ParticipantRole {
   ],
   "chapterId": "chapter_gaozu",
   "relatedParagraphs": ["para_15", "para_16", "para_17"],
+  "importance": "L3",
   "status": "PUBLISHED"
 }
 ```
+
+#### Event.importance 重要程度分级
+
+事件重要程度用于筛选和排序，确保关键事件（如主角生死）不会被遗漏：
+
+- **L1（最高优先级，必须包含）**：
+  - 改朝换代（如刘邦即皇帝位）
+  - 决定性重大战役（如垓下之战）
+  - **主角/核心人物的生死**（如刘邦崩、项羽死）
+  - 影响历史进程的关键决策（如怀王约先入关中者王之）
+
+- **L2（高优先级）**：
+  - 重要政治事件（如项羽分封十八路诸侯）
+  - 重大军事行动（如刘邦入咸阳）
+  - 影响地区或国家局势的事件（如彭城之战）
+
+- **L3（中优先级）**：
+  - 重要人物生死（非主角，如范增之死）
+  - 关键转折点（如鸿门宴）
+  - 影响主要人物命运的事件（如韩信请封假齐王）
+
+- **L4（低优先级，可选）**：
+  - 一般战役、次要政治事件、局部冲突
+
+- **L5（最低优先级，不提取）**：
+  - 个人琐事、日常事务、无关紧要的事件
+
+**提取策略**：
+- 系统采用两阶段提取流程：
+  1. **第一阶段**：快速提取所有事件的概览信息（名称、时间、重要程度）
+  2. **第二阶段**：按重要程度排序（L1 > L2 > L3），分页提取详细信息
+- 确保所有 L1 事件都被提取，即使数量较多
+- 同级别内按时间顺序排列
 
 ### 2.4 Person（人物）模型
 

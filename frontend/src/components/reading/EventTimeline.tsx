@@ -83,9 +83,13 @@ export function EventTimeline({
     })
   }
 
-  // 判断内容是否需要展开（超过约150字符或包含换行）
+  // 判断内容是否需要展开
+  // 由于 lineClamp={3} 大约能显示 100-150 个字符（取决于字体和宽度）
+  // 我们设置一个较低的阈值，确保大部分需要展开的内容都能显示按钮
   const needsExpand = (summary: string) => {
-    return summary && (summary.length > 150 || summary.includes('\n'))
+    if (!summary) return false
+    // 降低阈值：超过80字符或包含换行就显示展开按钮
+    return summary.length > 80 || summary.includes('\n')
   }
 
   // 清理地点名称：处理括号格式，提取主地名
@@ -240,18 +244,13 @@ export function EventTimeline({
                   {event.actors && event.actors.length > 0 && (
                     <Group gap={4}>
                       <Text size="xs" c="dimmed">参与者:</Text>
-                      {event.actors.slice(0, 4).map((actor, i) => (
+                      {event.actors.map((actor, i) => (
                         <Tooltip key={i} label={actor.description || actor.roleType}>
                           <Badge size="xs" variant="dot" color="gray">
                             {actor.name}
                           </Badge>
                         </Tooltip>
                       ))}
-                      {event.actors.length > 4 && (
-                        <Text size="xs" c="dimmed">
-                          等 {event.actors.length} 人
-                        </Text>
-                      )}
                     </Group>
                   )}
 

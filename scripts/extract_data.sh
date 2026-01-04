@@ -70,7 +70,7 @@ fi
 if [ -d "venv" ]; then
     source venv/bin/activate
 else
-    echo "❌ 错误: 虚拟环境不存在，请先运行: ./scripts/setup_python_env.sh"
+    echo "❌ 错误: 虚拟环境不存在，请先创建: python3 -m venv venv && source venv/bin/activate && pip install -r scripts/requirements.txt"
     exit 1
 fi
 

@@ -56,7 +56,6 @@ interface PlaceItem {
   featureType: string | null
   source: string
   chgisId: string | null
-  verified: boolean
   sourceChapterIds: string[]
   timeRangeBegin: string | null
   timeRangeEnd: string | null
@@ -68,7 +67,6 @@ function PlacesPage() {
   const [page, setPage] = useState(1)
   const [source, setSource] = useState<string>('')
   const [status, setStatus] = useState<string>('')
-  const [verified, setVerified] = useState<string>('')
   const [search, setSearch] = useState('')
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -92,19 +90,17 @@ function PlacesPage() {
     timeRangeBegin: '',
     timeRangeEnd: '',
     status: 'DRAFT',
-    verified: false,
   })
 
   // 获取地点列表
   const { data: placesData, isLoading } = useQuery({
-    queryKey: ['places', { page, source, status, verified, search }],
+    queryKey: ['places', { page, source, status, search }],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('pageSize', '20')
       if (source) params.append('source', source)
       if (status) params.append('status', status)
-      if (verified) params.append('verified', verified)
       if (search) params.append('search', search)
       const res = await api.get(`/api/admin/places?${params.toString()}`)
       return res.data
@@ -156,7 +152,6 @@ function PlacesPage() {
       timeRangeBegin: '',
       timeRangeEnd: '',
       status: 'DRAFT',
-      verified: false,
     })
     setEditModalOpen(true)
   }
@@ -180,7 +175,6 @@ function PlacesPage() {
       timeRangeBegin: item.timeRangeBegin || '',
       timeRangeEnd: item.timeRangeEnd || '',
       status: item.status || 'DRAFT',
-      verified: item.verified || false,
     })
     setEditModalOpen(true)
   }
@@ -212,7 +206,6 @@ function PlacesPage() {
       timeRangeBegin: form.timeRangeBegin || null,
       timeRangeEnd: form.timeRangeEnd || null,
       status: form.status,
-      verified: form.verified,
     }
     if (editing?.id) {
       payload.id = editing.id
@@ -258,17 +251,6 @@ function PlacesPage() {
           onChange={(v) => setStatus(v || '')}
           clearable
         />
-        <Select
-          placeholder="验证状态"
-          data={[
-            { value: '', label: '全部' },
-            { value: 'true', label: '已验证' },
-            { value: 'false', label: '未验证' },
-          ]}
-          value={verified}
-          onChange={(v) => setVerified(v || '')}
-          clearable
-        />
       </Group>
 
       {/* 地点列表 */}
@@ -280,20 +262,19 @@ function PlacesPage() {
             <Table.Th>坐标</Table.Th>
             <Table.Th>来源</Table.Th>
             <Table.Th>状态</Table.Th>
-            <Table.Th>验证</Table.Th>
             <Table.Th>操作</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {isLoading ? (
             <Table.Tr>
-              <Table.Td colSpan={7} style={{ textAlign: 'center' }}>
+              <Table.Td colSpan={6} style={{ textAlign: 'center' }}>
                 <Text>加载中...</Text>
               </Table.Td>
             </Table.Tr>
           ) : places.length === 0 ? (
             <Table.Tr>
-              <Table.Td colSpan={7} style={{ textAlign: 'center' }}>
+              <Table.Td colSpan={6} style={{ textAlign: 'center' }}>
                 <Text c="dimmed">暂无地点</Text>
               </Table.Td>
             </Table.Tr>
@@ -333,13 +314,6 @@ function PlacesPage() {
                   <Badge size="sm" color={place.status === 'PUBLISHED' ? 'green' : 'gray'}>
                     {place.status === 'PUBLISHED' ? '已发布' : '草稿'}
                   </Badge>
-                </Table.Td>
-                <Table.Td>
-                  {place.verified ? (
-                    <Badge size="sm" color="green">已验证</Badge>
-                  ) : (
-                    <Badge size="sm" color="yellow">未验证</Badge>
-                  )}
                 </Table.Td>
                 <Table.Td>
                   <Group gap="xs">
@@ -518,12 +492,6 @@ function PlacesPage() {
               value={form.status}
               onChange={(v) => setForm({ ...form, status: v || 'DRAFT' })}
             />
-            <Checkbox
-              label="已验证"
-              checked={form.verified}
-              onChange={(e) => setForm({ ...form, verified: e.target.checked })}
-              mt="xl"
-            />
           </Group>
           <Group justify="flex-end" mt="md">
             <Button variant="subtle" onClick={() => setEditModalOpen(false)}>
@@ -555,11 +523,6 @@ function PlacesPage() {
                 <Badge size="sm" color={viewing.status === 'PUBLISHED' ? 'green' : 'gray'}>
                   {viewing.status === 'PUBLISHED' ? '已发布' : '草稿'}
                 </Badge>
-                {viewing.verified ? (
-                  <Badge size="sm" color="green">已验证</Badge>
-                ) : (
-                  <Badge size="sm" color="yellow">未验证</Badge>
-                )}
               </Group>
               {viewing.coordinatesLng && viewing.coordinatesLat && (
                 <Text size="sm" mb="sm">

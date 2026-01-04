@@ -24,7 +24,8 @@
 
 在开始之前，请确认：
 
-- [ ] Python 虚拟环境已设置（运行过 `./scripts/setup_python_env.sh`）
+- [ ] Node.js 依赖已安装（运行过 `npm install` 和 `npx playwright install chromium`）
+- [ ] Python 虚拟环境已设置（用于 LLM 提取脚本，运行过 `python3 -m venv venv` 和 `pip install -r scripts/requirements.txt`）
 - [ ] API Key 已配置（`.env` 文件中有 `OPENAI_API_KEY` 或 `GOOGLE_API_KEY`）
 - [ ] 数据库已启动（`podman compose up -d` 或本地 PostgreSQL）
 - [ ] 后端服务已启动（`npm run dev:backend`）
@@ -407,7 +408,7 @@ python scripts/extract_with_llm.py \
 **最后更新**：2024-12-01
 
 **需要帮助？** 查看：
-- [数据准备流程](./prepare_data.md)
+- [完整操作手册](../docs/OPERATION_MANUAL.md)
 - [README](../README.md)
 - [快速开始指南](../docs/setup/QUICK_START.md)
 

@@ -47,7 +47,7 @@
 1. 查看详细指南：`scripts/INCREMENTAL_WORKFLOW.md`
 2. 快速开始阶段 1：
    ```bash
-   ./scripts/quick_start_stage1.sh
+   查看 [渐进式工作流指南](../scripts/INCREMENTAL_WORKFLOW.md)
    ```
 
 这个工作流会引导你从 1 个人物开始，逐步扩展到完整的数据集。
