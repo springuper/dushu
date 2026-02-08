@@ -7,7 +7,7 @@ import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { LLMExtractor } from '../lib/llmExtractor'
 import { createLogger } from '../lib/logger'
-import { sortEventsByTime } from '../lib/utils'
+import { sortEventsByTime, sortEventsByParagraphAndTime } from '../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('chapters')
@@ -114,9 +114,17 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Chapter not found' })
     }
 
-    // 对事件按时间正确排序（处理公元前日期和多种格式）
+    // 构建段落ID到order的映射
+    const paragraphOrderMap: Record<string, number> = {}
+    if (chapter.paragraphs) {
+      for (const para of chapter.paragraphs) {
+        paragraphOrderMap[para.id] = para.order
+      }
+    }
+
+    // 对事件按段落顺序和时间排序
     if (chapter.events) {
-      chapter.events = sortEventsByTime(chapter.events)
+      chapter.events = sortEventsByParagraphAndTime(chapter.events, paragraphOrderMap)
     }
 
     res.json(chapter)
@@ -546,15 +554,27 @@ router.get('/:id/events', async (req, res) => {
   try {
     const { status = 'PUBLISHED' } = req.query
 
-    const rawEvents = await prisma.event.findMany({
-      where: {
-        chapterId: id,
-        status: status as any,
-      },
-    })
+    const [rawEvents, paragraphs] = await Promise.all([
+      prisma.event.findMany({
+        where: {
+          chapterId: id,
+          status: status as any,
+        },
+      }),
+      prisma.paragraph.findMany({
+        where: { chapterId: id },
+        select: { id: true, order: true },
+      }),
+    ])
 
-    // 按时间正确排序（处理公元前日期和多种格式）
-    const events = sortEventsByTime(rawEvents)
+    // 构建段落ID到order的映射
+    const paragraphOrderMap: Record<string, number> = {}
+    for (const para of paragraphs) {
+      paragraphOrderMap[para.id] = para.order
+    }
+
+    // 按段落顺序和时间排序
+    const events = sortEventsByParagraphAndTime(rawEvents, paragraphOrderMap)
 
     res.json(events)
   } catch (error: any) {

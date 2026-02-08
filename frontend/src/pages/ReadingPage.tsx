@@ -109,7 +109,7 @@ function ReadingPage() {
   const [showInfoPanel, setShowInfoPanel] = useState(true)
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
-  const [activeTab, setActiveTab] = useState('persons')
+  const [activeTab, setActiveTab] = useState('events')
   const paragraphRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   const { data: chapter, isLoading, error } = useQuery<Chapter>({
@@ -193,11 +193,16 @@ function ReadingPage() {
   // 处理事件点击：选中事件 + 跳转到第一个相关段落
   const handleEventClick = useCallback((event: Event) => {
     setSelectedEvent(event)
+    setActiveTab('events')
     // 如果有相关段落，跳转到第一个
     if (event.relatedParagraphs && event.relatedParagraphs.length > 0) {
       handleJumpToParagraph(event.relatedParagraphs[0])
     }
-  }, [handleJumpToParagraph])
+    // 确保信息面板可见
+    if (!showInfoPanel) {
+      setShowInfoPanel(true)
+    }
+  }, [handleJumpToParagraph, showInfoPanel])
 
   // 处理人物点击：选中人物 + 切换到人物tab
   const handlePersonClick = useCallback((person: Person) => {

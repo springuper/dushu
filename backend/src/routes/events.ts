@@ -7,7 +7,7 @@ import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { logChange } from '../lib/changeLog'
 import { createLogger } from '../lib/logger'
-import { sortEventsByTime } from '../lib/utils'
+import { sortEventsByTime, sortEventsByParagraphAndTime } from '../lib/utils'
 
 const router = express.Router()
 const logger = createLogger('events')
@@ -287,12 +287,24 @@ router.post('/batch/status', requireAuth, async (req, res) => {
 router.get('/by-chapter/:chapterId', requireAuth, async (req, res) => {
   const { chapterId } = req.params
   try {
-    const rawEvents = await prisma.event.findMany({
-      where: { chapterId },
-    })
+    const [rawEvents, paragraphs] = await Promise.all([
+      prisma.event.findMany({
+        where: { chapterId },
+      }),
+      prisma.paragraph.findMany({
+        where: { chapterId },
+        select: { id: true, order: true },
+      }),
+    ])
 
-    // 按时间正确排序（处理公元前日期和多种格式）
-    const events = sortEventsByTime(rawEvents)
+    // 构建段落ID到order的映射
+    const paragraphOrderMap: Record<string, number> = {}
+    for (const para of paragraphs) {
+      paragraphOrderMap[para.id] = para.order
+    }
+
+    // 按段落顺序和时间排序
+    const events = sortEventsByParagraphAndTime(rawEvents, paragraphOrderMap)
 
     res.json(events)
   } catch (error: any) {

@@ -247,3 +247,54 @@ export function sortEventsByTime<T extends { timeRangeStart: string }>(events: T
   })
 }
 
+/**
+ * 按段落顺序和时间排序事件
+ * 优先按照段落的顺序排序（如果有多个段落，按最前面的段落排序）
+ * 对于同一段落的，再根据年份来排序
+ * 
+ * @param events 事件列表
+ * @param paragraphOrderMap 段落ID到order的映射 { paragraphId: order }
+ */
+export function sortEventsByParagraphAndTime<T extends { 
+  timeRangeStart: string
+  relatedParagraphs?: string[]
+}>(
+  events: T[],
+  paragraphOrderMap: Record<string, number>
+): T[] {
+  return [...events].sort((a, b) => {
+    // 获取每个事件的最前段落order（如果有多个段落，取最小的order）
+    const getMinParagraphOrder = (event: T): number => {
+      if (!event.relatedParagraphs || event.relatedParagraphs.length === 0) {
+        // 如果没有相关段落，返回一个很大的数字，排在最后
+        return Number.MAX_SAFE_INTEGER
+      }
+      
+      const orders = event.relatedParagraphs
+        .map(paraId => paragraphOrderMap[paraId])
+        .filter(order => order !== undefined)
+      
+      if (orders.length === 0) {
+        // 如果段落ID在映射中不存在，返回一个很大的数字，排在最后
+        return Number.MAX_SAFE_INTEGER
+      }
+      
+      // 返回最小的order（最前面的段落）
+      return Math.min(...orders)
+    }
+    
+    const orderA = getMinParagraphOrder(a)
+    const orderB = getMinParagraphOrder(b)
+    
+    // 先按段落order排序
+    if (orderA !== orderB) {
+      return orderA - orderB
+    }
+    
+    // 如果段落order相同，再按时间排序
+    const timeA = parseChineseDate(a.timeRangeStart)
+    const timeB = parseChineseDate(b.timeRangeStart)
+    return timeA - timeB
+  })
+}
+
