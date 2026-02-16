@@ -158,6 +158,10 @@ app.use('/api/persons', publicPersonsRouter)
 import publicEventsRouter from './routes/public/events'
 app.use('/api/events', publicEventsRouter)
 
+// Aggregate routes (public)
+import aggregateRouter from './routes/aggregate'
+app.use('/api/aggregate', aggregateRouter)
+
 // Location routes (public)
 import locationsRouter from './routes/locations'
 app.use('/api/locations', locationsRouter)

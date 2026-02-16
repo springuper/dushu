@@ -1,15 +1,68 @@
 /**
  * LLM 服务
- * 支持 OpenAI 和 Google Gemini API
+ * 支持 OpenAI、Google Gemini API 和 Anthropic Claude API
  */
 
 import OpenAI from 'openai'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import Anthropic from '@anthropic-ai/sdk'
 import { createLogger } from './logger'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 
 const logger = createLogger('llm')
+
+// Claude 配置文件路径
+const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json')
+
+/**
+ * 读取 ~/.claude/settings.json 配置文件
+ */
+function loadClaudeSettings(): Record<string, any> | null {
+  try {
+    if (fs.existsSync(CLAUDE_SETTINGS_PATH)) {
+      const content = fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8')
+      const settings = JSON.parse(content)
+      logger.debug('Loaded Claude settings from ~/.claude/settings.json')
+      return settings
+    }
+  } catch (error: any) {
+    logger.warn('Failed to load Claude settings', { error: error.message })
+  }
+  return null
+}
+
+/**
+ * 从 Claude 配置文件中获取环境变量
+ */
+function getClaudeEnvVars(): Record<string, string> {
+  const settings = loadClaudeSettings()
+  if (!settings || !settings.env) {
+    return {}
+  }
+  
+  const envVars: Record<string, string> = {}
+  if (settings.env.ANTHROPIC_API_KEY) {
+    envVars.ANTHROPIC_API_KEY = settings.env.ANTHROPIC_API_KEY
+  }
+  if (settings.env.ANTHROPIC_BASE_URL) {
+    envVars.ANTHROPIC_BASE_URL = settings.env.ANTHROPIC_BASE_URL
+  }
+  if (settings.env.CLAUDE_MODEL) {
+    envVars.CLAUDE_MODEL = settings.env.CLAUDE_MODEL
+  }
+  
+  return envVars
+}
+
+// 加载 Claude 配置并设置环境变量（如果尚未设置）
+const claudeEnvVars = getClaudeEnvVars()
+for (const [key, value] of Object.entries(claudeEnvVars)) {
+  if (!process.env[key]) {
+    process.env[key] = value
+  }
+}
 
 // 调试文件保存目录
 const DEBUG_DIR = path.join(process.cwd(), 'debug', 'llm-calls')
@@ -33,7 +86,7 @@ function saveDebugFile(filename: string, content: string) {
   }
 }
 
-export type LLMProvider = 'openai' | 'gemini' | 'auto'
+export type LLMProvider = 'openai' | 'gemini' | 'claude' | 'auto'
 
 export interface LLMConfig {
   provider?: LLMProvider
@@ -43,7 +96,7 @@ export interface LLMConfig {
 }
 
 export class LLMService {
-  private provider: 'openai' | 'gemini'
+  private provider: 'openai' | 'gemini' | 'claude'
   private client: any
   private model: string
 
