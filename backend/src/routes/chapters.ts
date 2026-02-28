@@ -6,23 +6,30 @@ import multer from 'multer'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 import { LLMExtractor } from '../lib/llmExtractor'
+import { LLMTranslator } from '../lib/llmTranslator'
+import { LLMMentionExtractor } from '../lib/llmMentionExtractor'
 import { createLogger } from '../lib/logger'
 import { sortEventsByTime, sortEventsByParagraphAndTime } from '../lib/utils'
+import { preprocessRawText } from '../lib/preprocessChapter'
 
 const router = express.Router()
 const logger = createLogger('chapters')
 
-// 配置 multer（内存存储，用于 JSON 文件）
+// 配置 multer（支持 JSON 和 TXT）
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
   },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/json' || file.originalname.endsWith('.json')) {
+    const isJson =
+      file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json')
+    const isTxt =
+      file.mimetype === 'text/plain' || file.originalname.toLowerCase().endsWith('.txt')
+    if (isJson || isTxt) {
       cb(null, true)
     } else {
-      cb(new Error('只支持 JSON 文件'))
+      cb(new Error('只支持 JSON 或 TXT 文件'))
     }
   },
 })
@@ -102,10 +109,36 @@ router.get('/:id', async (req, res) => {
                 position: 'asc',
               },
             },
+            mentions: {
+              orderBy: { startIndex: 'asc' },
+            },
           },
         },
         events: {
           where: { status: 'PUBLISHED' },
+        },
+        persons: {
+          where: { status: 'PUBLISHED' },
+          select: {
+            id: true,
+            name: true,
+            aliases: true,
+            role: true,
+            faction: true,
+            birthYear: true,
+            deathYear: true,
+            biography: true,
+          },
+        },
+        places: {
+          where: { status: 'PUBLISHED' },
+          select: {
+            id: true,
+            name: true,
+            aliases: true,
+            modernLocation: true,
+            geographicContext: true,
+          },
         },
       },
     })
@@ -134,9 +167,9 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-// 导入章节（从 JSON 文件）
+// 导入章节（支持 JSON 或 TXT，TXT 自动预处理）
 router.post('/import', requireAuth, upload.single('file'), async (req, res) => {
-  const { bookId } = req.body
+  const { bookId, title: optTitle, book: optBook, chapter: optChapter, url: optUrl } = req.body
   try {
     if (!req.file) {
       return res.status(400).json({ error: '请上传文件' })
@@ -155,13 +188,31 @@ router.post('/import', requireAuth, upload.single('file'), async (req, res) => {
       return res.status(404).json({ error: '书籍不存在' })
     }
 
-    // 解析 JSON 文件
+    const fileContent = req.file.buffer.toString('utf-8')
+    const isTxt =
+      req.file.mimetype === 'text/plain' || req.file.originalname.toLowerCase().endsWith('.txt')
+
     let chapterData: any
-    try {
-      const fileContent = req.file.buffer.toString('utf-8')
-      chapterData = JSON.parse(fileContent)
-    } catch (error) {
-      return res.status(400).json({ error: 'JSON 文件格式错误' })
+
+    if (isTxt) {
+      // 原始文本：自动预处理
+      chapterData = preprocessRawText(fileContent, {
+        title: optTitle,
+        book: optBook || book.name,
+        chapter: optChapter || optTitle,
+        url: optUrl,
+      })
+      logger.info('Chapter preprocessed from raw text', {
+        paragraphCount: chapterData.totalParagraphs,
+        title: chapterData.title,
+      })
+    } else {
+      // JSON 文件
+      try {
+        chapterData = JSON.parse(fileContent)
+      } catch (error) {
+        return res.status(400).json({ error: 'JSON 文件格式错误' })
+      }
     }
 
     // 验证数据格式
@@ -399,8 +450,7 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
     // 过滤出属于该章节的 ReviewItem
     const itemsToDelete = pendingItems.filter(item => {
       const data = item.originalData as any
-      return data?.chapterId === id || 
-             (Array.isArray(data?.sourceChapterIds) && data.sourceChapterIds.includes(id))
+      return data?.chapterId === id
     })
 
     if (itemsToDelete.length > 0) {
@@ -447,7 +497,6 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
           originalData: JSON.parse(JSON.stringify({
             ...person,
             chapterId: id,
-            sourceChapterIds: [id],
           })),
         },
       })
@@ -497,6 +546,148 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
   }
 })
 
+// 翻译章节段落
+router.post('/:id/translate', requireAuth, async (req, res) => {
+  const { id } = req.params
+  const { force } = req.body || {}
+  try {
+    const chapter = await prisma.chapter.findUnique({
+      where: { id },
+      include: {
+        book: true,
+        paragraphs: {
+          orderBy: { order: 'asc' },
+        },
+      },
+    })
+
+    if (!chapter) {
+      return res.status(404).json({ error: 'Chapter not found' })
+    }
+
+    const paragraphs = chapter.paragraphs
+    const toTranslate = force
+      ? paragraphs
+      : paragraphs.filter((p) => !p.translation || p.translation.trim().length === 0)
+
+    if (toTranslate.length === 0) {
+      return res.json({
+        success: true,
+        translatedCount: 0,
+        skippedCount: paragraphs.length,
+      })
+    }
+
+    const translator = new LLMTranslator()
+    const results = await translator.translate(
+      chapter.book.name,
+      chapter.title,
+      toTranslate.map((p) => ({ id: p.id, text: p.text }))
+    )
+
+    let translatedCount = 0
+    const resultMap = new Map(results.map((r) => [r.paragraphId, r.translation]))
+    for (const p of paragraphs) {
+      const translation = resultMap.get(p.id)
+      if (translation) {
+        await prisma.paragraph.update({
+          where: { id: p.id },
+          data: { translation },
+        })
+        translatedCount++
+      }
+    }
+
+    logger.info('Translate completed', {
+      chapterId: id,
+      translatedCount,
+      skippedCount: paragraphs.length - translatedCount,
+    })
+
+    res.json({
+      success: true,
+      translatedCount,
+      skippedCount: paragraphs.length - translatedCount,
+    })
+  } catch (error: any) {
+    logger.error('Translate failed', { chapterId: id, error: error.message })
+    res.status(500).json({ error: error.message || 'Internal server error' })
+  }
+})
+
+// 提取实体提及（人物、地点精确 span）
+router.post('/:id/extract-mentions', requireAuth, async (req, res) => {
+  const { id } = req.params
+  try {
+    const chapter = await prisma.chapter.findUnique({
+      where: { id },
+      include: {
+        paragraphs: { orderBy: { order: 'asc' } },
+        persons: {
+          where: { status: 'PUBLISHED' },
+          select: { id: true, name: true, aliases: true },
+        },
+        places: {
+          where: { status: 'PUBLISHED' },
+          select: { id: true, name: true, aliases: true },
+        },
+      },
+    })
+
+    if (!chapter) {
+      return res.status(404).json({ error: 'Chapter not found' })
+    }
+
+    if (chapter.persons.length === 0 && chapter.places.length === 0) {
+      return res.status(400).json({
+        error: '请先完成数据提取并审核通过人物、地点后再进行实体标注',
+      })
+    }
+
+    // 删除该章节段落已有的 mentions
+    await prisma.textMention.deleteMany({
+      where: {
+        paragraph: { chapterId: id },
+      },
+    })
+
+    const extractor = new LLMMentionExtractor()
+    const mentions = await extractor.extractMentions(
+      chapter.paragraphs.map((p) => ({ id: p.id, text: p.text })),
+      chapter.persons,
+      chapter.places
+    )
+
+    if (mentions.length > 0) {
+      await prisma.textMention.createMany({
+        data: mentions.map((m) => ({
+          paragraphId: m.paragraphId,
+          entityType: m.entityType,
+          entityId: m.entityId,
+          startIndex: m.startIndex,
+          endIndex: m.endIndex,
+        })),
+      })
+    }
+
+    logger.info('Extract mentions completed', {
+      chapterId: id,
+      mentionCount: mentions.length,
+    })
+
+    res.json({
+      success: true,
+      mentionCount: mentions.length,
+    })
+  } catch (error: any) {
+    logger.error('Extract mentions failed', {
+      chapterId: id,
+      error: error.message,
+    })
+    res.status(500).json({ error: error.message || 'Internal server error' })
+  }
+})
+
 // 获取章节提取状态
 router.get('/:id/extract-status', requireAuth, async (req, res) => {
   const { id } = req.params
@@ -534,12 +725,37 @@ router.get('/:id/extract-status', requireAuth, async (req, res) => {
       },
     })
 
+    // 统计翻译和实体标注
+    const paragraphs = await prisma.paragraph.findMany({
+      where: { chapterId: id },
+      select: {
+        id: true,
+        translation: true,
+        _count: { select: { mentions: true } },
+      },
+    })
+    const translatedCount = paragraphs.filter(
+      (p) => p.translation && p.translation.trim().length > 0
+    ).length
+    const mentionCount = paragraphs.reduce((sum, p) => sum + p._count.mentions, 0)
+    const personCount = await prisma.person.count({
+      where: { chapterId: id, status: 'PUBLISHED' },
+    })
+    const placeCount = await prisma.place.count({
+      where: { chapterId: id, status: 'PUBLISHED' },
+    })
+
     res.json({
       chapterId: id,
       status: publishedEventCount > 0 ? 'extracted' : 'pending',
       counts: {
         ...pendingCounts,
         publishedEvents: publishedEventCount,
+        translatedCount,
+        totalParagraphs: paragraphs.length,
+        mentionCount,
+        personCount,
+        placeCount,
       },
     })
   } catch (error: any) {

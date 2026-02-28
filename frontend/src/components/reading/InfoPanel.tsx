@@ -7,12 +7,16 @@ import { IconUsers, IconTimeline, IconLink } from '@tabler/icons-react'
 import { PersonList } from './PersonList'
 import { EventTimeline } from './EventTimeline'
 import { RelationshipGraph } from './RelationshipGraph'
-import type { Person, Event } from '../../lib/api'
+import type { Person, Event, EventImportanceFilter } from '../../lib/api'
 
 interface InfoPanelProps {
   chapterId: string
+  events?: Event[]
+  eventImportanceFilter?: EventImportanceFilter
+  onEventImportanceFilterChange?: (filter: EventImportanceFilter) => void
   onPersonClick?: (person: Person) => void
   onEventClick?: (event: Event) => void
+  onEventDetailClick?: (event: Event) => void
   onJumpToParagraph?: (paragraphId: string) => void
   selectedPersonId?: string
   selectedEventId?: string
@@ -22,8 +26,12 @@ interface InfoPanelProps {
 
 export function InfoPanel({
   chapterId,
+  events,
+  eventImportanceFilter = 'L1,L2',
+  onEventImportanceFilterChange,
   onPersonClick,
   onEventClick,
+  onEventDetailClick,
   onJumpToParagraph,
   selectedPersonId,
   selectedEventId,
@@ -52,8 +60,11 @@ export function InfoPanel({
 
         <Tabs.Panel value="events" pt="md" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <EventTimeline
-            chapterId={chapterId}
+            events={events}
+            eventImportanceFilter={eventImportanceFilter}
+            onEventImportanceFilterChange={onEventImportanceFilterChange}
             onEventClick={onEventClick}
+            onEventDetailClick={onEventDetailClick}
             onJumpToParagraph={onJumpToParagraph}
             selectedEventId={selectedEventId}
           />

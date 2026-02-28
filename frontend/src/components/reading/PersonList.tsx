@@ -57,14 +57,15 @@ const roleNames: Record<string, string> = {
   OTHER: '其他',
 }
 
-export function PersonList({ onPersonClick, selectedPersonId }: PersonListProps) {
+export function PersonList({ chapterId, onPersonClick, selectedPersonId }: PersonListProps) {
   const [search, setSearch] = useState('')
   const [factionFilter, setFactionFilter] = useState<string>('all')
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['persons', { pageSize: 100 }],
-    queryFn: () => getPersons({ pageSize: 100 }),
+    queryKey: ['persons', { chapterId, pageSize: 200 }],
+    queryFn: () => getPersons({ chapterId, pageSize: 200 }),
+    enabled: !!chapterId,
   })
 
   // 过滤人物

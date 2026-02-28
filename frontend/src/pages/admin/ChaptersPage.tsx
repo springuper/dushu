@@ -52,20 +52,30 @@ function ChaptersPage() {
     if (!selectedFile) return
 
     setFile(selectedFile)
+    const isTxt = selectedFile.name.toLowerCase().endsWith('.txt')
 
-    // 预览文件内容
     const reader = new FileReader()
     reader.onload = (e) => {
+      const content = e.target?.result as string
       try {
-        const content = JSON.parse(e.target?.result as string)
-        setPreview({
-          title: content.title,
-          source: content.source,
-          paragraphCount: content.paragraphs?.length || 0,
-          sample: content.paragraphs?.[0] || content,
-        })
+        if (isTxt) {
+          setPreview({
+            title: '原始文本（将自动预处理）',
+            paragraphCount: 0,
+            sample: content.slice(0, 300) + (content.length > 300 ? '...' : ''),
+            isRawText: true,
+          })
+        } else {
+          const parsed = JSON.parse(content)
+          setPreview({
+            title: parsed.title,
+            source: parsed.source,
+            paragraphCount: parsed.paragraphs?.length || 0,
+            sample: parsed.paragraphs?.[0] || parsed,
+          })
+        }
       } catch (error) {
-        setPreview({ error: 'JSON 格式错误' })
+        setPreview({ error: isTxt ? '文件读取失败' : 'JSON 格式错误' })
       }
     }
     reader.readAsText(selectedFile)
@@ -115,16 +125,16 @@ function ChaptersPage() {
 
                 <div>
                   <Text size="sm" fw={500} mb="xs">
-                    选择章节 JSON 文件
+                    选择章节文件（支持 .json 或 .txt，.txt 将自动预处理）
                   </Text>
                   <Group>
                     <FileButton
                       onChange={handleFileSelect}
-                      accept="application/json"
+                      accept=".json,.txt,application/json,text/plain"
                     >
                       {(props) => (
                         <Button {...props} leftSection={<IconUpload size={16} />}>
-                          选择 JSON 文件
+                          选择 JSON 或 TXT 文件
                         </Button>
                       )}
                     </FileButton>
@@ -152,7 +162,7 @@ function ChaptersPage() {
                             <strong>章节标题：</strong>
                             {preview.title || '未指定'}
                           </Text>
-                          {preview.source && (
+                          {preview.source && !preview.isRawText && (
                             <Text size="sm">
                               <strong>来源：</strong>
                               {preview.source.book} - {preview.source.chapter}
@@ -160,11 +170,11 @@ function ChaptersPage() {
                           )}
                           <Text size="sm">
                             <strong>段落数：</strong>
-                            {preview.paragraphCount}
+                            {preview.isRawText ? '（上传后自动预处理）' : preview.paragraphCount}
                           </Text>
                           <div>
                             <Text size="sm" fw={500} mb="xs">
-                              第一段示例：
+                              {preview.isRawText ? '文本预览：' : '第一段示例：'}
                             </Text>
                             <Code block style={{ maxHeight: 150, overflow: 'auto' }}>
                               {typeof preview.sample === 'object'

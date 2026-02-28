@@ -183,6 +183,7 @@ export interface PersonsResponse {
 }
 
 export interface GetPersonsParams {
+  chapterId?: string
   faction?: string
   role?: string
   search?: string
@@ -244,6 +245,7 @@ export interface Event {
   chapterId: string
   relatedParagraphs: string[]
   status: string
+  importance?: string
   chapter?: {
     id: string
     title: string
@@ -282,9 +284,24 @@ export const getEventById = async (id: string): Promise<Event> => {
   return response.data
 }
 
+export type EventImportanceFilter = 'L1' | 'L1,L2' | 'L1,L2,L3'
+
+// 事件重要程度显示
+export const importanceLabels: Record<string, string> = {
+  L1: '核心',
+  L2: '重要',
+  L3: '一般',
+  L4: '次要',
+  L5: '琐碎',
+}
+
 // 按章节获取事件
-export const getEventsByChapter = async (chapterId: string): Promise<Event[]> => {
-  const response = await api.get(`/api/events/by-chapter/${chapterId}`)
+export const getEventsByChapter = async (
+  chapterId: string,
+  options?: { importance?: EventImportanceFilter }
+): Promise<Event[]> => {
+  const params = options?.importance ? { importance: options.importance } : {}
+  const response = await api.get(`/api/events/by-chapter/${chapterId}`, { params })
   return response.data
 }
 

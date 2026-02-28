@@ -31,8 +31,8 @@ from datetime import datetime
 # 加载环境变量
 from dotenv import load_dotenv
 
-# 加载 .env 文件（从项目根目录）
-env_path = Path(__file__).parent.parent / '.env'
+# 加载 backend/.env 文件
+env_path = Path(__file__).parent.parent / 'backend' / '.env'
 load_dotenv(env_path)
 
 # 检测可用的 API

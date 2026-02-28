@@ -26,7 +26,7 @@
 
 - [ ] Node.js 依赖已安装（运行过 `npm install` 和 `npx playwright install chromium`）
 - [ ] Python 虚拟环境已设置（用于 LLM 提取脚本，运行过 `python3 -m venv venv` 和 `pip install -r scripts/requirements.txt`）
-- [ ] API Key 已配置（`.env` 文件中有 `OPENAI_API_KEY` 或 `GOOGLE_API_KEY`）
+- [ ] API Key 已配置（`backend/.env` 中有 `OPENAI_API_KEY` 或 `GOOGLE_API_KEY`）
 - [ ] 数据库已启动（`podman compose up -d` 或本地 PostgreSQL）
 - [ ] 后端服务已启动（`npm run dev:backend`）
 - [ ] 前端服务已启动（`npm run dev:frontend`）
@@ -321,7 +321,7 @@ python scripts/extract_with_llm.py \
 **症状**：脚本报错，提示 API Key 无效或网络错误
 
 **解决**：
-1. 检查 `.env` 文件中的 API Key 是否正确
+1. 检查 `backend/.env` 中的 API Key 是否正确
 2. 检查网络连接
 3. 检查 API 配额是否用完
 

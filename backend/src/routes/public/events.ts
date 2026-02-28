@@ -114,14 +114,38 @@ router.get('/:id', async (req, res) => {
 })
 
 // 按章节获取事件（公开）
+// importance: L1 | L1,L2 | L1,L2,L3 | all，默认 L1,L2
 router.get('/by-chapter/:chapterId', async (req, res) => {
   const { chapterId } = req.params
+  const importanceParam = (req.query.importance as string) || 'all'
   try {
+    const where: any = {
+      chapterId,
+      status: 'PUBLISHED',
+    }
+    if (importanceParam !== 'all') {
+      const levels = importanceParam.split(',').map((s) => s.trim()).filter(Boolean)
+      if (levels.length > 0) {
+        where.importance = { in: levels }
+      }
+    }
+
     const [rawEvents, paragraphs] = await Promise.all([
       prisma.event.findMany({
-        where: {
-          chapterId,
-          status: 'PUBLISHED',
+        where,
+        include: {
+          chapter: {
+            select: {
+              id: true,
+              title: true,
+              book: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
         },
       }),
       prisma.paragraph.findMany({

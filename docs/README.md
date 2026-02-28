@@ -22,6 +22,20 @@
   - 验收标准
   - 时间估算
 
+- **[CHAPTER_BOUND_KISS_DESIGN.md](./development/CHAPTER_BOUND_KISS_DESIGN.md)** - 章节绑定 KISS 设计方案
+  - 人物、地点、事件全部绑定章节，不做合并
+  - 按需 AI 汇总作为补充信息
+  - Schema 变更与实施顺序
+
+- **[DATA_ACQUISITION_WORKFLOW.md](./development/DATA_ACQUISITION_WORKFLOW.md)** - 数据获取流程设计
+  - 下载、预处理、导入的统一流程
+  - 脚本与后台双路径
+
+- **[TRANSLATION_AND_HIGHLIGHT_DESIGN.md](./development/TRANSLATION_AND_HIGHLIGHT_DESIGN.md)** - 章节翻译与实体高亮设计
+  - 段落现代文翻译流程与数据模型
+  - 人物/地点 LLM 精确标注（TextMention）
+  - 阅读页展示与开关
+
 ### 📊 [data/](./data/) - 数据相关
 
 - **[DATA_SOURCES.md](./data/DATA_SOURCES.md)** - 数据来源与版权说明

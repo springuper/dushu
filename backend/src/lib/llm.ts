@@ -1,11 +1,11 @@
 /**
  * LLM 服务
- * 支持 OpenAI、Google Gemini API 和 Anthropic Claude API
+ * 支持 OpenAI、Google Gemini API
  */
 
 import OpenAI from 'openai'
+import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import Anthropic from '@anthropic-ai/sdk'
 import { createLogger } from './logger'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -99,6 +99,7 @@ export class LLMService {
   private provider: 'openai' | 'gemini' | 'claude'
   private client: any
   private model: string
+  private timeoutMs: number
 
   constructor(config: LLMConfig = {}) {
     const envProvider = (process.env.LLM_PROVIDER as LLMProvider | undefined)?.toLowerCase() as
@@ -107,10 +108,12 @@ export class LLMService {
     const provider = config.provider || envProvider || this.detectProvider()
     this.provider = provider === 'auto' ? this.detectProvider() : provider
 
+    this.timeoutMs = Number(process.env.LLM_TIMEOUT_MS) || 300000
+
     if (this.provider === 'gemini') {
-      const apiKey = config.apiKey || process.env.GOOGLE_API_KEY
+      const apiKey = config.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
       if (!apiKey) {
-        throw new Error('需要设置 GOOGLE_API_KEY 环境变量')
+        throw new Error('需要设置 GEMINI_API_KEY 或 GOOGLE_API_KEY 环境变量')
       }
       const genAI = new GoogleGenerativeAI(apiKey)
       const envModel = process.env.LLM_MODEL || process.env.GEMINI_MODEL
@@ -124,24 +127,37 @@ export class LLMService {
         throw new Error('需要设置 OPENAI_API_KEY 环境变量')
       }
       const baseURL = config.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+      const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+      const dispatcher = proxy ? new ProxyAgent(proxy) : undefined
+      const fetchOptions = dispatcher
+        ? { fetch: (input: string | URL | globalThis.Request, init?: RequestInit) => undiciFetch(input, { ...init, dispatcher }) }
+        : undefined
       this.client = new OpenAI({
         apiKey,
         baseURL,
+        timeout: this.timeoutMs,
+        ...fetchOptions,
       })
       const envModel = process.env.LLM_MODEL || process.env.OPENAI_MODEL
       this.model = config.model || envModel || 'gpt-4o-mini'
-      logger.info('LLM service initialized', { provider: 'openai', model: this.model, baseURL })
+      logger.info('LLM service initialized', {
+        provider: 'openai',
+        model: this.model,
+        baseURL,
+        timeoutMs: this.timeoutMs,
+        ...(proxy && { proxy }),
+      })
     }
   }
 
   private detectProvider(): 'openai' | 'gemini' {
-    if (process.env.GOOGLE_API_KEY) {
+    if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
       return 'gemini'
     }
     if (process.env.OPENAI_API_KEY) {
       return 'openai'
     }
-    throw new Error('需要设置 GOOGLE_API_KEY 或 OPENAI_API_KEY 环境变量')
+    throw new Error('需要设置 GEMINI_API_KEY、GOOGLE_API_KEY 或 OPENAI_API_KEY 环境变量')
   }
 
   /**
@@ -231,11 +247,14 @@ export class LLMService {
         messages.push({ role: 'user', content: prompt })
 
         logger.debug('OpenAI API calling', { messageCount: messages.length })
-        const response = await this.client.chat.completions.create({
-          model: this.model,
-          messages,
-          temperature,
-        })
+        const response = await this.client.chat.completions.create(
+          {
+            model: this.model,
+            messages,
+            temperature,
+          },
+          { timeout: this.timeoutMs }
+        )
 
         const text = response.choices[0].message.content || ''
         

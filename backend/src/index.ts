@@ -1,14 +1,22 @@
+import path from 'path'
+import dotenv from 'dotenv'
+
+// 加载 backend/.env（含 DATABASE_URL、OPENAI_API_KEY 等）
+dotenv.config({ path: path.resolve(__dirname, '../.env') })
+
+// 设置全局 fetch 代理（Gemini SDK 等不支持的库会走这里）
+const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+if (proxy) {
+  const { setGlobalDispatcher, ProxyAgent } = require('undici')
+  setGlobalDispatcher(new ProxyAgent(proxy))
+}
+
 import express from 'express'
 import cors from 'cors'
-import dotenv from 'dotenv'
 import session from 'express-session'
 import connectPgSimple from 'connect-pg-simple'
-import path from 'path'
 import { Pool } from 'pg'
 import { createLogger, generateRequestId } from './lib/logger'
-
-// 加载项目根目录的 .env 文件
-dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 const logger = createLogger('http')
 
@@ -126,30 +134,25 @@ app.use('/api/books', booksRouter)
 import chaptersRouter from './routes/chapters'
 app.use('/api/chapters', chaptersRouter)
 
-// Admin routes
-import adminRouter from './routes/admin'
-app.use('/api/admin', adminRouter)
-
-// Review routes
+// Admin routes - 更具体的路径放在前面，避免被 /api/admin 通用匹配拦截
 import reviewRouter from './routes/review'
-app.use('/api/admin/review', reviewRouter)
-
-// Import routes
 import importRouter from './routes/import'
-app.use('/api/admin/import', importRouter)
+import personsRouter from './routes/persons'
+import eventsRouter from './routes/events'
+import placesRouter from './routes/places'
+import changelogRouter from './routes/changelog'
 
-// Content management routes (admin access, same routers but different paths)
+app.use('/api/admin/review', reviewRouter)
+app.use('/api/admin/import', importRouter)
 app.use('/api/admin/books', booksRouter)
 app.use('/api/admin/chapters', chaptersRouter)
-
-import personsRouter from './routes/persons'
 app.use('/api/admin/persons', personsRouter)
-
-import eventsRouter from './routes/events'
 app.use('/api/admin/events', eventsRouter)
-
-import placesRouter from './routes/places'
 app.use('/api/admin/places', placesRouter)
+app.use('/api/admin/changelog', changelogRouter)
+
+import adminRouter from './routes/admin'
+app.use('/api/admin', adminRouter)
 
 // Public API routes (no authentication required)
 import publicPersonsRouter from './routes/public/persons'
@@ -165,10 +168,6 @@ app.use('/api/aggregate', aggregateRouter)
 // Location routes (public)
 import locationsRouter from './routes/locations'
 app.use('/api/locations', locationsRouter)
-
-// Change log routes
-import changelogRouter from './routes/changelog'
-app.use('/api/admin/changelog', changelogRouter)
 
 // Start server
 app.listen(PORT, () => {

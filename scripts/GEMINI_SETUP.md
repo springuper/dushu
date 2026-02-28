@@ -11,22 +11,22 @@
 
 ## 设置环境变量
 
-### 方法 1：使用 .env 文件（推荐）
+### 方法 1：使用 backend/.env 文件（推荐）
 
 ```bash
-# 从模板创建 .env 文件
+# 从模板创建 backend/.env
 ./scripts/setup_env.sh
 
 # 或手动创建
-cp .env.example .env
+cp backend/.env.example backend/.env
 
-# 编辑 .env 文件，填入 API Key
-nano .env
+# 编辑 backend/.env，填入 API Key
+nano backend/.env
 # 或
-vim .env
+vim backend/.env
 ```
 
-在 `.env` 文件中设置：
+在 `backend/.env` 中设置：
 
 ```env
 GOOGLE_API_KEY=your-api-key-here

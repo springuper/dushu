@@ -17,6 +17,7 @@ router.get('/', async (req, res) => {
       faction,
       role,
       search,
+      chapterId,
       page = '1',
       pageSize = '50',
     } = req.query
@@ -25,6 +26,9 @@ router.get('/', async (req, res) => {
       status: 'PUBLISHED', // 只返回已发布的人物
     }
     
+    if (chapterId) {
+      where.chapterId = Array.isArray(chapterId) ? chapterId[0] : chapterId
+    }
     if (faction) where.faction = faction
     if (role) where.role = role
 

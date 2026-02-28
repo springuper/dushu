@@ -12,8 +12,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const { program } = require('commander');
 
-// 加载环境变量
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+// 加载环境变量（与 backend 共用 backend/.env）
+require('dotenv').config({ path: path.join(__dirname, '..', 'backend', '.env') });
 
 /**
  * 从维基文库下载文本

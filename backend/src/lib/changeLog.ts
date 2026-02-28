@@ -6,7 +6,7 @@
 import { prisma } from './prisma'
 import { Person, Event } from '@prisma/client'
 
-export type EntityType = 'PERSON' | 'EVENT'
+export type EntityType = 'PERSON' | 'EVENT' | 'PLACE'
 export type ChangeAction = 'CREATE' | 'UPDATE' | 'MERGE' | 'DELETE'
 
 export interface ChangeLogData {

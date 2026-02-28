@@ -16,15 +16,17 @@ router.get('/person', async (req, res) => {
   }
 
   try {
-    // 1. 查询数据库中所有同名的记录
+    // 1. 查询数据库中所有同名或别名的记录（章节绑定设计）
     const persons = await prisma.person.findMany({
       where: {
-        name: name,
+        OR: [
+          { name },
+          { aliases: { has: name } },
+        ],
         status: 'PUBLISHED',
       },
-      orderBy: {
-        createdAt: 'asc',
-      },
+      include: { chapter: { select: { title: true, order: true } } },
+      orderBy: { chapter: { order: 'asc' } },
     })
 
     if (persons.length === 0) {
@@ -43,7 +45,7 @@ router.get('/person', async (req, res) => {
 
     // 2. 将信息整合成 Prompt
     const historicalRecords = persons.map((p, index) => {
-      return `记录 ${index + 1} (来源章节ID: ${p.sourceChapterIds.join(', ')}):
+      return `记录 ${index + 1} (来源: ${(p as any).chapter?.title || p.chapterId}):
 - 简介: ${p.biography}
 - 阵营: ${p.faction}
 - 角色: ${p.role}`

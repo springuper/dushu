@@ -101,15 +101,16 @@ export function buildEventOverviewPrompt(
 
 ## 提取要求
 
-1. **提取所有级别1-3的事件**，忽略级别4-5
-2. **必须包含所有L1事件**，即使数量较多
-3. **准确评估重要程度**：
+1. **简体中文**：事件名称必须使用简体中文。若原文为繁体，请转换为简体后再输出（避免如「鴻門」应输出「鸿门」）
+2. **提取所有级别1-3的事件**，忽略级别4-5
+3. **必须包含所有L1事件**，即使数量较多
+4. **准确评估重要程度**：
    - 主角/核心人物的生死**必须**标记为L1
    - 改朝换代**必须**标记为L1
    - 决定性战役**必须**标记为L1或L2
-4. **按时间顺序排列**（timeRangeStart）
-5. **关联段落ID**，便于后续定位
-6. **只输出 JSON**，不要其他说明文字
+5. **按时间顺序排列**（timeRangeStart）
+6. **关联段落ID**，便于后续定位
+7. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹，不要任何前后缀或说明文字
 
 ## 待处理文本${formatNote}${processedText}`
 }
@@ -236,15 +237,16 @@ ${eventOverviews.map((e, idx) => {
 
 ## 要求
 
-1. **返回所有事件的详细信息**：必须返回列表中所有 ${eventCount} 个事件（第 ${startIndex} 到第 ${endIndex} 个）的完整信息
-2. **保持 importance 字段**：必须与概览列表中的重要程度一致
-3. **按时间顺序**：确保事件按 timeRangeStart 排序
-4. **完整性**：每个事件的详细信息必须完整，包括所有必需字段
-5. **参与者命名**：actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"）
-6. **参与者数量限制**：每个事件最多包含5个最重要的参与者，按重要性排序
-7. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
-8. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
-9. **严格停止要求**：输出完整的 JSON 对象后，必须以 \`}\` 结尾并立即停止。禁止在 JSON 之后添加任何内容，包括但不限于：
+1. **简体中文**：事件名称、人物姓名（actors.name）、地名（locationName）必须使用简体中文。若原文为繁体（如「田橫」「鴻門」），请转换为简体（「田横」「鸿门」）后再输出
+2. **返回所有事件的详细信息**：必须返回列表中所有 ${eventCount} 个事件（第 ${startIndex} 到第 ${endIndex} 个）的完整信息
+3. **保持 importance 字段**：必须与概览列表中的重要程度一致
+4. **按时间顺序**：确保事件按 timeRangeStart 排序
+5. **完整性**：每个事件的详细信息必须完整，包括所有必需字段
+6. **参与者命名**：actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"），且必须为简体
+7. **参与者数量限制**：每个事件最多包含5个最重要的参与者，按重要性排序
+8. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
+9. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹${relatedParagraphsRequirement}
+10. **严格停止要求**：输出完整的 JSON 对象后，必须以 \`}\` 结尾并立即停止。禁止在 JSON 之后添加任何内容，包括但不限于：
    - 额外的代码块标记（如 \`\`\` 或 \`\`\`json）
    - 解释性文字
    - 说明性内容
@@ -390,7 +392,7 @@ ${eventNames.map((name, idx) => `${idx + 1}. ${name}`).join('\n')}
 5. **参与者命名**：actors.name 应使用人物的**本名**（如"刘邦"而非"高祖"或"沛公"）
 6. **参与者数量限制**：每个事件最多包含5个最重要的参与者，按重要性排序。如果参与者超过5个，只选择最重要的5个
 7. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
-8. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
+8. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹${relatedParagraphsRequirement}
 
 ## 待处理文本${formatNote}${processedText}
 
@@ -405,7 +407,7 @@ ${eventNames.map((name, idx) => `${idx + 1}. ${name}`).join('\n')}
 ## 重要提醒
 
 请严格按照上述格式和要求提取事件：
-- **只输出 JSON**，不要添加任何解释性文字
+- **只输出 JSON**：直接以 { 开头，严禁使用 \`\`\`json 或 \`\`\` 包裹，不要任何解释性文字
 - **使用人物本名**（如"刘邦"而非"高祖"或"沛公"）
 - **每个事件必须关联到相关段落ID**（relatedParagraphs字段），这对于阅读时的定位非常重要
 - **确保事件摘要完整**，不遗漏关键细节
@@ -550,7 +552,7 @@ ${eventNames.map((name, idx) => `${idx + 1}. ${name}`).join('\n')}
    - OBSERVER: 旁观者/见证者
    - OTHER: 其他
 8. **摘要质量**：确保摘要完整叙述事件经过，不遗漏关键细节
-9. **只输出 JSON**，不要其他说明文字${relatedParagraphsRequirement}
+9. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹${relatedParagraphsRequirement}
 
 ## 待处理文本${formatNote}${processedText}${importantReminder}
 `
@@ -560,7 +562,7 @@ ${eventNames.map((name, idx) => `${idx + 1}. ${name}`).join('\n')}
  * 事件提取系统提示词
  */
 export function eventSystemPrompt(): string {
-  return '你是专业的历史文献分析专家，擅长从古文中提取结构化的历史事件信息。请严格按照 JSON 格式输出，不要添加任何解释性文字。输出完整的 JSON 对象后必须立即停止，禁止在 JSON 之后添加任何内容。'
+  return '你是专业的历史文献分析专家，擅长从古文中提取结构化的历史事件信息。事件名称、人物姓名、地名必须使用简体中文输出。仅输出纯 JSON 对象，直接以 { 开头，严禁使用 markdown 代码块包裹。输出完整的 JSON 对象后必须立即停止，禁止在 JSON 之后添加任何内容。'
 }
 
 // ============================================
@@ -568,45 +570,9 @@ export function eventSystemPrompt(): string {
 // ============================================
 
 /**
- * 构建人物信息补全提示词
+ * 构建人物信息补全提示词（章节绑定，不做融合）
  */
-export function buildPersonPrompt(
-  text: string,
-  personNames: string[],
-  existingPersons: any[] = []
-): string {
-  const existingPersonsSection =
-    existingPersons.length > 0
-      ? `
-
-## 已有的人物数据（用于融合和完善）
-
-以下是在数据库中已存在的人物记录。请检查新文本中的人物是否与已有记录匹配：
-
-${existingPersons
-  .map(
-    (p, i) => `
-${i + 1}. **${p.name}** (ID: ${p.id})
-   - 别名: ${p.aliases?.join(', ') || '无'}
-   - 角色: ${p.role}
-   - 阵营: ${p.faction}
-   - 传记: ${p.biography?.substring(0, 200) || '无'}${p.biography && p.biography.length > 200 ? '...' : ''}
-   - 来源章节: ${p.sourceChapterIds?.join(', ') || '无'}
-`
-  )
-  .join('\n')}
-
-**融合规则**：
-- 如果新文本中的人物与已有记录匹配（通过名称或别名），请**完善已有记录**：
-  - 补充新的别名（如果文本中有新的称呼）
-  - 补充或完善传记（基于新文本内容）
-  - 更新 sourceChapterIds（添加新章节ID）
-  - 保留已有记录的 ID（在输出中标记 existingId 字段）
-- 如果新文本中的人物与已有记录不匹配，创建新记录
-- 如果已有记录的信息更完整，优先保留已有信息，只补充新信息
-`
-      : ''
-
+export function buildPersonPrompt(text: string, personNames: string[]): string {
   return `你是历史人物研究专家。请根据以下文本，为这些人物补全详细信息。
 
 ## 重要：人物去重与别名识别
@@ -614,6 +580,7 @@ ${i + 1}. **${p.name}** (ID: ${p.id})
 **注意**：以下名称列表中可能有多个名称指向同一个人（如"高祖"、"沛公"、"刘邦"都是刘邦）。
 
 **命名规则（必须遵守）**：
+- **简体中文**：name 和 aliases 中的所有人名必须使用简体中文。若原文为繁体（如「田橫」「項羽」），请转换为简体（「田横」「项羽」）后再输出
 - name 字段必须使用人物的**本名**（出生时的姓名），而非封号、谥号或庙号
 - 其他所有称呼（字、号、封号、谥号、庙号等）都放入 aliases 数组
 - **不要为同一个人创建多条记录**
@@ -630,7 +597,7 @@ ${i + 1}. **${p.name}** (ID: ${p.id})
 - 为"高祖"单独创建一条记录 ✗
 - 为"沛公"单独创建一条记录 ✗
 - name 使用"高祖"而非"刘邦" ✗
-${existingPersonsSection}
+
 ## 需要补全信息的人物列表
 
 ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
@@ -642,12 +609,16 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
     {
       "name": "人物本名（不是封号/谥号）",
       "aliases": ["字", "号", "封号", "谥号", "其他称呼"],
+      "zi": "字（如「张良字子房」中的子房，可选）",
       "role": "MONARCH|ADVISOR|GENERAL|CIVIL_OFFICIAL|MILITARY_OFFICIAL|RELATIVE|EUNUCH|OTHER",
       "faction": "HAN|CHU|NEUTRAL|OTHER",
       "biography": "人物简介（200-400字，基于文本内容）",
-      "birthYear": "出生年份（如知道）",
+      "birthYear": "出生年份（如知道，格式：前256年）",
+      "birthDate": "生辰/诞辰（更精确的出生时间，如知道）",
+      "birthPlace": "出生地（如「刘邦，沛丰邑中阳里人」）",
       "deathYear": "去世年份（如知道）",
-      "existingId": "已有记录的ID（如果匹配到已有记录，否则不提供此字段）"
+      "deathPlace": "逝世地（如「崩于长乐宫」「卒于乌江」）",
+      "nativePlace": "籍贯（祖籍，如「张良，其先韩人也」）"
     }
   ]
 }
@@ -663,7 +634,9 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
       "faction": "HAN",
       "biography": "汉朝开国皇帝，出身沛县平民，早年任亭长。秦末起义，先入关中，约法三章得民心。楚汉之争中，善用人才，以张良、萧何、韩信为核心，最终击败项羽，统一天下，建立汉朝。",
       "birthYear": "前256年",
-      "deathYear": "前195年"
+      "birthPlace": "沛丰邑中阳里",
+      "deathYear": "前195年",
+      "deathPlace": "长乐宫"
     },
     {
       "name": "项籍",
@@ -672,16 +645,19 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
       "faction": "CHU",
       "biography": "秦末起义领袖，楚国贵族后裔。力能扛鼎，勇冠三军。巨鹿之战破釜沉舟大败秦军，威震天下。分封诸侯自立为西楚霸王。楚汉之争中因刚愎自用，不善用人，最终败于垓下，乌江自刎。",
       "birthYear": "前232年",
-      "deathYear": "前202年"
+      "nativePlace": "下相",
+      "deathYear": "前202年",
+      "deathPlace": "乌江"
     }
   ]
 }
 
 ## 补全要求
 
-1. **人物去重**：识别指向同一人的不同名称，合并为一条记录
-2. **本名优先**：name 字段使用本名，其他称呼放入 aliases
-3. **角色分类**：
+1. **简体中文**：name、aliases、biography 等所有人名相关内容必须使用简体中文。繁体需转换为简体
+2. **人物去重**：识别指向同一人的不同名称（含繁简异体如「田横」「田橫」），合并为一条记录
+3. **本名优先**：name 字段使用本名，其他称呼放入 aliases
+4. **角色分类**：
    - MONARCH: 君主/帝王
    - ADVISOR: 谋士/策士
    - GENERAL: 将领/武将
@@ -690,14 +666,15 @@ ${personNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}
    - RELATIVE: 外戚/皇亲
    - EUNUCH: 宦官
    - OTHER: 其他
-4. **阵营分类**（根据文本时代背景）：
+5. **阵营分类**（根据文本时代背景）：
    - HAN: 汉方/刘邦阵营
    - CHU: 楚方/项羽阵营
    - NEUTRAL: 中立
    - OTHER: 其他
-5. **信息来源**：biography 应基于文本内容，不要杜撰
-6. **年份格式**：使用"前XXX年"格式
-7. **只输出 JSON**，不要其他说明文字
+6. **信息来源**：biography 应基于文本内容，不要杜撰
+7. **年份格式**：使用"前XXX年"或"前XXX年X月"格式
+8. **扩展字段**（zi、birthDate、birthPlace、deathPlace、nativePlace）：文本有则提取，无则省略
+9. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹
 
 ## 参考文本
 
@@ -709,7 +686,7 @@ ${text.slice(0, 15000)}
  * 人物提取系统提示词
  */
 export function personSystemPrompt(): string {
-  return '你是专业的历史人物研究专家，擅长从古文中提取人物信息。请严格按照 JSON 格式输出，不要添加任何解释性文字。'
+  return '你是专业的历史人物研究专家，擅长从古文中提取人物信息。所有人名必须使用简体中文输出。仅输出纯 JSON 对象，直接以 { 开头，严禁使用 markdown 代码块包裹，不要添加任何解释性文字。'
 }
 
 // ============================================
@@ -786,11 +763,12 @@ ${existingPlaceSection}
 
 ## 要求
 
-1. **现代位置**：尽可能精确到省市区，如"陕西省西安市临潼区骊山北麓"
-2. **坐标**：如果知道现代位置，提供大致坐标（经度、纬度）
-3. **历史行政隶属**：按当时的行政区划层级提供
-4. **地理背景**：说明地理位置、地形特征、战略意义等
-5. **只输出 JSON**，不要其他说明文字
+1. **简体中文**：name、aliases 等地点名称必须使用简体中文。若原文为繁体，请转换为简体后再输出
+2. **现代位置**：尽可能精确到省市区，如"陕西省西安市临潼区骊山北麓"
+3. **坐标**：如果知道现代位置，提供大致坐标（经度、纬度）
+4. **历史行政隶属**：按当时的行政区划层级提供
+5. **地理背景**：说明地理位置、地形特征、战略意义等
+6. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹
 
 ## 参考文本
 
@@ -862,22 +840,23 @@ ${locationsList}${chgisSummary}
 
 ## 重要要求
 
-1. **必须为所有地点提供信息**：输出数组应包含所有 ${locationNames.length} 个地点
-2. **坐标信息**：
+1. **简体中文**：name、aliases 等地点名称必须使用简体中文。若原文为繁体，请转换为简体后再输出
+2. **必须为所有地点提供信息**：输出数组应包含所有 ${locationNames.length} 个地点
+3. **坐标信息**：
    - 如果 CHGIS 提供了坐标，优先使用 CHGIS 的坐标
    - 如果 CHGIS 没有坐标，根据现代位置推断大致坐标
    - 如果无法确定，坐标字段可以为 null
-3. **现代位置**：
+4. **现代位置**：
    - 如果 CHGIS 提供了现代位置，优先使用
    - 如果 CHGIS 没有，根据文本和历史知识推断
    - 尽可能精确到省市区，如"陕西省西安市临潼区骊山北麓"
-4. **地理背景**：这是最重要的补充信息，即使有 CHGIS 数据，也要基于文本内容提供：
+5. **地理背景**：这是最重要的补充信息，即使有 CHGIS 数据，也要基于文本内容提供：
    - 地理位置描述
    - 地形特征
    - 战略意义
    - 历史重要性
-5. **历史行政隶属**：按当时的行政区划层级提供
-6. **只输出 JSON**，不要其他说明文字
+6. **历史行政隶属**：按当时的行政区划层级提供
+7. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹
 
 ## 参考文本
 
@@ -889,6 +868,118 @@ ${chapterText.slice(0, 15000)}
  * 地点提取系统提示词
  */
 export function locationSystemPrompt(): string {
-  return '你是专业的历史地理研究专家，擅长查询历史地名的现代位置和历史行政隶属。请严格按照 JSON 格式输出，不要添加任何解释性文字。'
+  return '你是专业的历史地理研究专家，擅长查询历史地名的现代位置和历史行政隶属。地点名称必须使用简体中文输出。仅输出纯 JSON 对象，直接以 { 开头，严禁使用 markdown 代码块包裹，不要添加任何解释性文字。'
+}
+
+// ============================================
+// 段落翻译提示词
+// ============================================
+
+/**
+ * 构建段落翻译提示词
+ * 使用段落序号（1-based）而非 UUID，避免 LLM 转录长 ID 时出错
+ */
+export function buildTranslationPrompt(
+  bookName: string,
+  chapterTitle: string,
+  paragraphs: { id: string; text: string; index: number }[]
+): string {
+  const paragraphLines = paragraphs
+    .map((p) => `## 段落 ${p.index}\n${p.text.trim()}`)
+    .join('\n\n')
+  return `你是古文翻译专家。请将以下文言文段落翻译成通俗的现代汉语。
+
+## 书籍与章节
+- 书籍：${bookName}
+- 章节：${chapterTitle}
+
+## 输出格式（严格 JSON）
+{
+  "translations": [
+    { "paragraphIndex": 1, "translation": "现代文译文" },
+    ...
+  ]
+}
+
+## 要求
+1. 每段原文对应一条翻译，paragraphIndex 必须与输入中的「段落 N」的 N 完全一致
+2. 专有名词（人名、地名）可保留原文，或加括号注现代名
+3. 保持段落一一对应，不要合并或拆分
+4. **仅输出纯 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹，不要任何前后缀或说明文字
+
+## 待翻译段落
+
+${paragraphLines}
+`
+}
+
+export function translationSystemPrompt(): string {
+  return '你是专业的古文翻译专家，擅长将文言文翻译成通俗易懂的现代汉语。仅输出纯 JSON 对象，直接以 { 开头，严禁使用 markdown 代码块包裹。每段对应一条翻译，paragraphIndex 为段落序号（与输入中的「段落 N」一致）。'
+}
+
+// ============================================
+// 实体提及标注提示词
+// ============================================
+
+/**
+ * 构建实体提及提取提示词
+ */
+export function buildMentionExtractPrompt(
+  paragraphs: { id: string; text: string }[],
+  persons: { id: string; name: string; aliases: string[] }[],
+  places: { id: string; name: string; aliases: string[] }[]
+): string {
+  const paragraphLines = paragraphs
+    .map((p) => `[${p.id}] ${p.text.trim()}`)
+    .join('\n\n')
+  const personLines = persons
+    .map((p) => `- ${p.id}: ${p.name}${p.aliases?.length ? ` (别称: ${p.aliases.join('、')})` : ''}`)
+    .join('\n')
+  const placeLines = places
+    .map((p) => `- ${p.id}: ${p.name}${p.aliases?.length ? ` (别称: ${p.aliases.join('、')})` : ''}`)
+    .join('\n')
+
+  return `你是古文实体识别专家。请从以下段落中标注所有人物和地点的提及位置。
+
+## 人物列表（只标注以下人物）
+${personLines || '（无）'}
+
+## 地点列表（只标注以下地点）
+${placeLines || '（无）'}
+
+## 输出格式（严格 JSON）
+{
+  "mentions": [
+    {
+      "paragraphId": "段落ID",
+      "entityType": "PERSON" 或 "PLACE",
+      "entityId": "对应人物或地点的id",
+      "startIndex": 0,
+      "endIndex": 2
+    }
+  ]
+}
+
+## 索引规则
+- startIndex: 字符起始位置（0-based，含）
+- endIndex: 字符结束位置（不含）
+- 例："高祖" 在段落开头 → startIndex=0, endIndex=2
+
+## 要求
+1. 仅标注上述人物和地点列表中的实体，不要标注未列出的
+2. 别名需正确映射到对应 entityId（如"沛公"→刘邦的id）
+3. 同一 span 只标注一次，取最具体的实体（如"沛丰邑"中"沛""丰邑"分别标）
+4. 若某字为多义词（如"将"），仅在人名/地名含义时标注，不标"将军"中的"将"
+5. 重叠 span 时，取更长的匹配（如"刘邦"优先于"刘"）
+6. **只输出 JSON**：直接以 { 开头、以 } 结尾，严禁使用 \`\`\`json 或 \`\`\` 包裹
+
+## 待标注段落
+
+${paragraphLines}
+`
+}
+
+export function mentionExtractSystemPrompt(): string {
+  return '你是专业的古文实体识别专家，能准确识别文中人物和地点的提及位置。仅输出纯 JSON 对象，直接以 { 开头，严禁使用 markdown 代码块包裹。startIndex 和 endIndex 为字符索引（0-based，endIndex 不含）。'
 }
 

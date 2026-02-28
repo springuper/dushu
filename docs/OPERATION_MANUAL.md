@@ -47,7 +47,7 @@
    # 使用设置脚本
    ./scripts/setup_env.sh
    
-   # 或手动编辑 .env 文件
+   # 或手动编辑 backend/.env 文件
    # 设置 GOOGLE_API_KEY 或 OPENAI_API_KEY
    ```
    
@@ -81,10 +81,11 @@
 
 ### 完整流程（包含数据准备）
 
-如果还没有章节 JSON 文件：
+如果还没有章节数据：
 
 ```
-1. 下载原始文本（脚本） → 2. 预处理（脚本） → 3. 上传章节 → 4. 提取数据 → 5. 批量审核
+方式 A：脚本下载+预处理 → 后台上传 JSON → 提取 → 审核
+方式 B：后台上传原始 TXT（自动预处理）→ 提取 → 审核
 ```
 
 **预计时间**：15-20 分钟
@@ -96,11 +97,11 @@
 ### 流程图
 
 ```
-获取原始文本
+获取原始文本（脚本 / 手动复制）
     ↓
-预处理（生成 JSON）
+[可选] 预处理为 JSON（脚本 或 后台自动）
     ↓
-上传章节到系统
+上传章节到系统（支持 .json 或 .txt）
     ↓
 在章节处理页面提取数据
     ↓
@@ -115,19 +116,29 @@
 
 ### 步骤 1：准备章节数据
 
-> **提示**：如果已经有预处理好的 JSON 文件，可以跳过步骤 1.1 和 1.2，直接进入步骤 2。
+> **提示**：后台支持直接上传 **原始 .txt**，系统会自动预处理，可跳过步骤 1.2。
 
 #### 1.1 获取原始文本
 
-**方法 1：使用脚本自动下载（推荐）**
+**方法 1：一键脚本（推荐）**
 
-使用 Playwright 脚本自动从维基文库下载：
+下载 + 预处理一次完成，得到可直接导入的 JSON：
 
 ```bash
-# 使用便捷脚本（推荐，一键完成下载和预处理）
+./scripts/download_and_prepare.sh \
+  --url "https://zh.wikisource.org/wiki/史記/卷008" \
+  --book "史记" \
+  --chapter "高祖本纪"
+# 输出: data/processed/chapters/史记_高祖本纪_xxx.json
+```
+
+**方法 2：仅下载**
+
+```bash
+# 仅下载《史记·高祖本纪》
 ./scripts/download_first_chapter_auto.sh
 
-# 或手动运行下载脚本
+# 或手动指定
 node scripts/download_with_playwright.js \
   --url "https://zh.wikisource.org/wiki/史記/卷008" \
   --output "data/raw/shiji/shiji_01_gaozu_benji.txt" \
@@ -135,17 +146,9 @@ node scripts/download_with_playwright.js \
   --chapter "高祖本纪"
 ```
 
-**参数说明**：
-- `--url`: 维基文库页面 URL（必需）
-- `--output`: 输出文件路径（必需）
-- `--book`: 书籍名称（可选）
-- `--chapter`: 章节名称（可选）
+**前提条件**：`npm install`，`npx playwright install chromium`
 
-**前提条件**：
-- 已安装 Node.js 依赖：`npm install`
-- 已安装 Playwright 浏览器：`npx playwright install chromium`
-
-**方法 2：手动下载**
+**方法 3：手动下载**
 
 如果自动下载失败，可以手动下载：
 
@@ -180,7 +183,9 @@ URL：https://zh.wikisource.org/wiki/史記/卷008
 - 📖 [维基文库](https://zh.wikisource.org) - 免费古籍文本
 - 📖 [中国哲学书电子化计划](https://ctext.org) - 高质量古籍资源
 
-#### 1.2 预处理（生成结构化 JSON）
+#### 1.2 预处理（仅当上传 .txt 时可选）
+
+若使用脚本下载，`download_and_prepare.sh` 已包含预处理。若仅下载了 .txt，可：
 
 使用预处理脚本将原始文本转换为结构化 JSON：
 
@@ -248,18 +253,17 @@ node scripts/preprocess_text.js \
    - 其他信息（可选）
 5. 点击 **保存**
 
-#### 2.2 上传章节 JSON
+#### 2.2 上传章节
 
 1. 进入 **内容管理 → 书籍章节**
 2. 选择 **导入章节** 标签页
 3. 选择书籍（从下拉框选择）
-4. 选择章节 JSON 文件
+4. 选择文件（支持 **.json** 或 **.txt**）
+   - **.json**：预处理后的章节数据（如脚本生成的）
+   - **.txt**：原始文本，系统会自动预处理后导入
 5. 点击 **开始导入**
 
-**注意**：
-- 章节会保存到数据库
-- 段落会自动创建
-- 此时还没有提取数据
+**注意**：章节会保存到数据库，段落会自动创建，此时还没有提取数据。
 
 ---
 
@@ -360,12 +364,17 @@ node scripts/preprocess_text.js \
 ### Q1: 如何快速获取章节数据？
 
 **推荐方法**：
-使用自动脚本一键完成下载和预处理：
+使用一键脚本完成下载和预处理：
 
 ```bash
-# 下载《史记·高祖本纪》并预处理
-./scripts/download_first_chapter_auto.sh
+# 下载并预处理任意章节
+./scripts/download_and_prepare.sh \
+  --url "https://zh.wikisource.org/wiki/史記/卷008" \
+  --book "史记" \
+  --chapter "高祖本纪"
 ```
+
+或直接在后台上传原始 .txt 文件（从维基文库复制粘贴保存），系统会自动预处理。
 
 **手动方法**：
 1. 使用下载脚本：`node scripts/download_with_playwright.js --url "..." --output "..."`
@@ -470,7 +479,7 @@ A:
 ### Q12: API Key 设置问题？
 
 A:
-1. 确认 `.env` 文件在项目根目录
+1. 确认 `backend/.env` 文件存在
 2. 确认环境变量名称正确（`GOOGLE_API_KEY` 或 `OPENAI_API_KEY`）
 3. 确认 API Key 有效（未过期、有额度）
 

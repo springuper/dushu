@@ -168,12 +168,12 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
       if (!newData.name || !newData.name.trim()) {
         return res.status(400).json({ error: '人物姓名不能为空' })
       }
+      if (!newData.chapterId) {
+        return res.status(400).json({ error: '人物必须关联章节（chapterId）' })
+      }
       
       const personName = newData.name.trim()
       const personAliases = newData.aliases || []
-      
-      // KISS Principle: Always create a new entity, never merge.
-      // The merge logic is handled on the read-side by the aggregation API.
       
       // 为 biography 提供默认值
       const biography = (newData.biography && newData.biography.trim()) 
@@ -182,15 +182,21 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
       
       const newPerson = await prisma.person.create({
         data: {
+          chapterId: newData.chapterId,
           name: personName,
           aliases: personAliases,
+          zi: newData.zi || null,
           role: mapRole(newData.role),
           faction: mapFaction(newData.faction),
           birthYear: newData.birthYear || null,
+          birthDate: newData.birthDate || null,
+          birthPlace: newData.birthPlace || null,
           deathYear: newData.deathYear || null,
+          deathPlace: newData.deathPlace || null,
+          nativePlace: newData.nativePlace || null,
           biography: biography,
           portraitUrl: newData.portraitUrl || null,
-          sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+          relatedParagraphIds: newData.relatedParagraphIds || [],
           status: 'PUBLISHED',
         },
       })
@@ -302,32 +308,36 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
       if (!newData.name || !newData.name.trim()) {
         return res.status(400).json({ error: '地点名称不能为空' })
       }
+      if (!newData.chapterId) {
+        return res.status(400).json({ error: '地点必须关联章节（chapterId）' })
+      }
 
       const placeName = newData.name.trim()
-      const placeAliases = newData.aliases || []
+      const placeAliases = Array.isArray(newData.aliases) ? newData.aliases : []
+      const relatedParagraphIds = Array.isArray(newData.relatedParagraphIds) ? newData.relatedParagraphIds : []
+      // timeRangeBegin/End 可能为数字（LLM 返回年份如 -208），Prisma 需 String，强制转换
+      const toStr = (v: unknown): string | null => (v == null || v === '') ? null : `${v}`
 
-      // KISS Principle: Always create a new entity, never merge.
-
-      // 创建新地点
-      const createdPlace = await (prisma as any).place.create({
+      const createdPlace = await prisma.place.create({
         data: {
+          chapterId: newData.chapterId,
           name: placeName,
           aliases: placeAliases,
           featureType: newData.featureType || null,
-          coordinatesLng: newData.coordinates?.lng ? Number(newData.coordinates.lng) : null,
-          coordinatesLat: newData.coordinates?.lat ? Number(newData.coordinates.lat) : null,
+          coordinatesLng: newData.coordinates?.lng != null ? Number(newData.coordinates.lng) : null,
+          coordinatesLat: newData.coordinates?.lat != null ? Number(newData.coordinates.lat) : null,
           modernLocation: newData.modernLocation || null,
           modernAddress: newData.modernAddress || null,
           adminLevel1: newData.adminLevel1 || null,
           adminLevel2: newData.adminLevel2 || null,
           adminLevel3: newData.adminLevel3 || null,
           geographicContext: newData.geographicContext || null,
-          timeRangeBegin: newData.timeRangeBegin || null,
-          timeRangeEnd: newData.timeRangeEnd || null,
+          timeRangeBegin: toStr(newData.timeRangeBegin),
+          timeRangeEnd: toStr(newData.timeRangeEnd),
           source: mapPlaceSource(newData.source),
-          sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+          chgisId: newData.chgisId || null,
+          relatedParagraphIds,
           status: 'PUBLISHED',
-          verified: false, // 新创建的地点需要后续验证
         },
       })
 
@@ -376,8 +386,13 @@ router.post('/items/:id/approve', requireAuth, async (req, res) => {
 
     res.json(updatedItem)
   } catch (error: any) {
-    logger.error('Review approve error', { reviewId: id, error: error.message })
-    res.status(500).json({ error: 'Internal server error' })
+    logger.error('Review approve error', { reviewId: id, error: error.message, stack: error.stack })
+    const message = error?.message || 'Internal server error'
+    const code = error?.code
+    res.status(500).json({
+      error: message,
+      ...(code && { code }),
+    })
   }
 })
 
@@ -463,6 +478,11 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
             errorCount++
             continue
           }
+          if (!newData.chapterId) {
+            errors.push({ id, error: '人物必须关联章节（chapterId）' })
+            errorCount++
+            continue
+          }
 
           const personName = newData.name.trim()
           const personAliases = newData.aliases || []
@@ -473,15 +493,21 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
 
           const newPerson = await prisma.person.create({
             data: {
+              chapterId: newData.chapterId,
               name: personName,
               aliases: personAliases,
+              zi: newData.zi || null,
               role: mapRole(newData.role),
               faction: mapFaction(newData.faction),
               birthYear: newData.birthYear || null,
+              birthDate: newData.birthDate || null,
+              birthPlace: newData.birthPlace || null,
               deathYear: newData.deathYear || null,
+              deathPlace: newData.deathPlace || null,
+              nativePlace: newData.nativePlace || null,
               biography: biography,
               portraitUrl: newData.portraitUrl || null,
-              sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+              relatedParagraphIds: newData.relatedParagraphIds || [],
               status: 'PUBLISHED',
             },
           })
@@ -568,29 +594,37 @@ router.post('/batch-approve', requireAuth, async (req, res) => {
             errorCount++
             continue
           }
+          if (!newData.chapterId) {
+            errors.push({ id, error: '地点必须关联章节（chapterId）' })
+            errorCount++
+            continue
+          }
 
           const placeName = newData.name.trim()
-          const placeAliases = newData.aliases || []
+          const placeAliases = Array.isArray(newData.aliases) ? newData.aliases : []
+          const relatedParagraphIds = Array.isArray(newData.relatedParagraphIds) ? newData.relatedParagraphIds : []
+          const toStr = (v: unknown): string | null => (v == null || v === '') ? null : `${v}`
 
-          const createdPlace = await (prisma as any).place.create({
+          const createdPlace = await prisma.place.create({
             data: {
+              chapterId: newData.chapterId,
               name: placeName,
               aliases: placeAliases,
               featureType: newData.featureType || null,
-              coordinatesLng: newData.coordinates?.lng ? Number(newData.coordinates.lng) : null,
-              coordinatesLat: newData.coordinates?.lat ? Number(newData.coordinates.lat) : null,
+              coordinatesLng: newData.coordinates?.lng != null ? Number(newData.coordinates.lng) : null,
+              coordinatesLat: newData.coordinates?.lat != null ? Number(newData.coordinates.lat) : null,
               modernLocation: newData.modernLocation || null,
               modernAddress: newData.modernAddress || null,
               adminLevel1: newData.adminLevel1 || null,
               adminLevel2: newData.adminLevel2 || null,
               adminLevel3: newData.adminLevel3 || null,
               geographicContext: newData.geographicContext || null,
-              timeRangeBegin: newData.timeRangeBegin || null,
-              timeRangeEnd: newData.timeRangeEnd || null,
+              timeRangeBegin: toStr(newData.timeRangeBegin),
+              timeRangeEnd: toStr(newData.timeRangeEnd),
               source: mapPlaceSource(newData.source),
-              sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
+              chgisId: newData.chgisId || null,
+              relatedParagraphIds,
               status: 'PUBLISHED',
-              verified: false,
             },
           })
 
@@ -729,103 +763,60 @@ router.post('/approve-all', requireAuth, async (req, res) => {
             errorCount++
             continue
           }
+          if (!newData.chapterId) {
+            errors.push({ id, error: '人物必须关联章节（chapterId）' })
+            errorCount++
+            continue
+          }
 
           const personName = newData.name.trim()
           const personAliases = newData.aliases || []
           
-          // 检查是否已存在同名或别名匹配的人物
-          const existingPerson = await findExistingPerson(personName, personAliases)
-          
-          if (existingPerson) {
-            // 合并到已有人物
-            const mergedAliases = mergeAliases(existingPerson.aliases, personName, personAliases)
-            const finalAliases = mergedAliases.filter(a => a !== existingPerson.name)
-            
-            const biography = mergeBiography(
-              existingPerson.biography,
-              newData.biography?.trim() || ''
-            )
-            
-            const sourceChapterIds = mergeSourceChapterIds(
-              existingPerson.sourceChapterIds,
-              newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : [])
-            )
-            
-            const previousData = { ...existingPerson }
-            
-            const updatedPerson = await prisma.person.update({
-              where: { id: existingPerson.id },
-              data: {
-                aliases: finalAliases,
-                biography,
-                sourceChapterIds,
-                birthYear: existingPerson.birthYear || newData.birthYear || null,
-                deathYear: existingPerson.deathYear || newData.deathYear || null,
-              },
-            })
-            
-            await logChange({
-              entityType: 'PERSON',
-              entityId: existingPerson.id,
-              action: 'MERGE',
-              previousData,
-              currentData: updatedPerson,
-              changedBy: adminId,
-              changeReason: notes || `一键全部通过 - 合并自 ReviewItem: ${personName}`,
-            })
-            
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: `已合并到已有人物: ${existingPerson.name}`,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-            
-            successCount++
-          } else {
-            const biography = (newData.biography && newData.biography.trim()) 
-              ? newData.biography.trim() 
-              : `（${personName}，暂无详细简介）`
+          const biography = (newData.biography && newData.biography.trim()) 
+            ? newData.biography.trim() 
+            : `（${personName}，暂无详细简介）`
 
-            const newPerson = await prisma.person.create({
-              data: {
-                name: personName,
-                aliases: personAliases,
-                role: mapRole(newData.role),
-                faction: mapFaction(newData.faction),
-                birthYear: newData.birthYear || null,
-                deathYear: newData.deathYear || null,
-                biography: biography,
-                portraitUrl: newData.portraitUrl || null,
-                sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
-                status: 'PUBLISHED',
-              },
-            })
+          const newPerson = await prisma.person.create({
+            data: {
+              chapterId: newData.chapterId,
+              name: personName,
+              aliases: personAliases,
+              zi: newData.zi || null,
+              role: mapRole(newData.role),
+              faction: mapFaction(newData.faction),
+              birthYear: newData.birthYear || null,
+              birthDate: newData.birthDate || null,
+              birthPlace: newData.birthPlace || null,
+              deathYear: newData.deathYear || null,
+              deathPlace: newData.deathPlace || null,
+              nativePlace: newData.nativePlace || null,
+              biography: biography,
+              portraitUrl: newData.portraitUrl || null,
+              relatedParagraphIds: newData.relatedParagraphIds || [],
+              status: 'PUBLISHED',
+            },
+          })
 
-            await logChange({
-              entityType: 'PERSON',
-              entityId: newPerson.id,
-              action: 'CREATE',
-              currentData: newPerson,
-              changedBy: adminId,
-              changeReason: notes || '一键全部通过 - 从 ReviewItem 创建',
-            })
+          await logChange({
+            entityType: 'PERSON',
+            entityId: newPerson.id,
+            action: 'CREATE',
+            currentData: newPerson,
+            changedBy: adminId,
+            changeReason: notes || '一键全部通过 - 从 ReviewItem 创建',
+          })
 
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: notes,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
+          await prisma.reviewItem.update({
+            where: { id },
+            data: {
+              status: 'APPROVED',
+              reviewerNotes: notes,
+              reviewedBy: adminId,
+              reviewedAt: new Date(),
+            },
+          })
 
-            successCount++
-          }
+          successCount++
         } else if (item.type === 'EVENT') {
           if (!newData.name || !newData.name.trim()) {
             errors.push({ id, error: '事件名称不能为空' })
@@ -844,218 +835,106 @@ router.post('/approve-all', requireAuth, async (req, res) => {
             ? newData.summary.trim() 
             : `（${eventName}，暂无详细摘要）`
 
-          // 检查是否已存在相同的事件
-          const existingEvent = await findExistingEvent(
-            eventName,
-            eventTimeRangeStart,
-            newData.locationName
-          )
+          // 章节绑定：直接创建，不合并
+          const createdEvent = await prisma.event.create({
+            data: {
+              name: eventName,
+              type: mapEventType(newData.type),
+              timeRangeStart: eventTimeRangeStart,
+              timeRangeEnd: newData.timeRangeEnd || null,
+              timePrecision: mapTimePrecision(newData.timePrecision),
+              locationName: newData.locationName || null,
+              locationModernName: newData.locationModernName || null,
+              summary: eventSummary,
+              impact: newData.impact || null,
+              actors: newData.actors || [],
+              importance: newData.importance || null,
+              chapterId: newData.chapterId,
+              relatedParagraphs: newData.relatedParagraphs || [],
+              status: 'PUBLISHED',
+            },
+          })
 
-          if (existingEvent) {
-            // 合并到已有事件
-            const mergedSummary = mergeEventSummary(existingEvent.summary, eventSummary)
-            const mergedRelatedParagraphs = mergeRelatedParagraphs(
-              existingEvent.relatedParagraphs,
-              newData.relatedParagraphs || []
-            )
-            const mergedActors = mergeEventActors(
-              (existingEvent.actors as any[]) || [],
-              newData.actors || []
-            )
-            
-            const mergedImpact = newData.impact && newData.impact.trim() && 
-              (!existingEvent.impact || newData.impact.length > existingEvent.impact.length)
-              ? newData.impact.trim()
-              : existingEvent.impact
+          await logChange({
+            entityType: 'EVENT',
+            entityId: createdEvent.id,
+            action: 'CREATE',
+            currentData: createdEvent,
+            changedBy: adminId,
+            changeReason: notes || '一键全部通过 - 从 ReviewItem 创建',
+          })
 
-            const previousData = { ...existingEvent }
+          await prisma.reviewItem.update({
+            where: { id },
+            data: {
+              status: 'APPROVED',
+              reviewerNotes: notes,
+              reviewedBy: adminId,
+              reviewedAt: new Date(),
+            },
+          })
 
-            const updatedEvent = await prisma.event.update({
-              where: { id: existingEvent.id },
-              data: {
-                summary: mergedSummary,
-                impact: mergedImpact,
-                actors: mergedActors,
-                relatedParagraphs: mergedRelatedParagraphs,
-                locationName: existingEvent.locationName || newData.locationName || null,
-                locationModernName: existingEvent.locationModernName || newData.locationModernName || null,
-                timeRangeEnd: existingEvent.timeRangeEnd || newData.timeRangeEnd || null,
-                importance: existingEvent.importance || newData.importance || null,
-              },
-            })
-
-            await logChange({
-              entityType: 'EVENT',
-              entityId: existingEvent.id,
-              action: 'MERGE',
-              previousData,
-              currentData: updatedEvent,
-              changedBy: adminId,
-              changeReason: notes || `一键全部通过 - 合并自 ReviewItem: ${eventName}`,
-            })
-
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: `已合并到已有事件: ${existingEvent.name}`,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-
-            successCount++
-          } else {
-            // 创建新事件
-            const createdEvent = await prisma.event.create({
-              data: {
-                name: eventName,
-                type: mapEventType(newData.type),
-                timeRangeStart: eventTimeRangeStart,
-                timeRangeEnd: newData.timeRangeEnd || null,
-                timePrecision: mapTimePrecision(newData.timePrecision),
-                locationName: newData.locationName || null,
-                locationModernName: newData.locationModernName || null,
-                summary: eventSummary,
-                impact: newData.impact || null,
-                actors: newData.actors || [],
-                chapterId: newData.chapterId,
-                relatedParagraphs: newData.relatedParagraphs || [],
-                status: 'PUBLISHED',
-              },
-            })
-
-            await logChange({
-              entityType: 'EVENT',
-              entityId: createdEvent.id,
-              action: 'CREATE',
-              currentData: createdEvent,
-              changedBy: adminId,
-              changeReason: notes || '一键全部通过 - 从 ReviewItem 创建',
-            })
-
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: notes,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-
-            successCount++
-          }
+          successCount++
         } else if (item.type === 'PLACE') {
-          // 处理地点类型
           if (!newData.name || !newData.name.trim()) {
             errors.push({ id, error: '地点名称不能为空' })
             errorCount++
             continue
           }
+          if (!newData.chapterId) {
+            errors.push({ id, error: '地点必须关联章节（chapterId）' })
+            errorCount++
+            continue
+          }
 
           const placeName = newData.name.trim()
-          const placeAliases = newData.aliases || []
+          const placeAliases = Array.isArray(newData.aliases) ? newData.aliases : []
+          const relatedParagraphIds = Array.isArray(newData.relatedParagraphIds) ? newData.relatedParagraphIds : []
+          const toStr = (v: unknown): string | null => (v == null || v === '') ? null : `${v}`
 
-          // 检查是否已存在同名或别名匹配的地点
-          const existingPlace = await findExistingPlace(placeName, placeAliases)
+          const newPlace = await prisma.place.create({
+            data: {
+              chapterId: newData.chapterId,
+              name: placeName,
+              aliases: placeAliases,
+              featureType: newData.featureType || null,
+              coordinatesLng: newData.coordinates?.lng != null ? Number(newData.coordinates.lng) : null,
+              coordinatesLat: newData.coordinates?.lat != null ? Number(newData.coordinates.lat) : null,
+              modernLocation: newData.modernLocation || null,
+              modernAddress: newData.modernAddress || null,
+              adminLevel1: newData.adminLevel1 || null,
+              adminLevel2: newData.adminLevel2 || null,
+              adminLevel3: newData.adminLevel3 || null,
+              geographicContext: newData.geographicContext || null,
+              timeRangeBegin: toStr(newData.timeRangeBegin),
+              timeRangeEnd: toStr(newData.timeRangeEnd),
+              source: mapPlaceSource(newData.source),
+              chgisId: newData.chgisId || null,
+              relatedParagraphIds,
+              status: 'PUBLISHED',
+            },
+          })
 
-          if (existingPlace) {
-            // 合并到已有地点
-            const mergedAliases = mergeAliases(existingPlace.aliases, placeName, placeAliases)
-            const finalAliases = mergedAliases.filter(a => a !== existingPlace.name)
+          await logChange({
+            entityType: 'PLACE',
+            entityId: newPlace.id,
+            action: 'CREATE',
+            currentData: newPlace,
+            changedBy: adminId,
+            changeReason: notes || '一键全部通过 - 从 ReviewItem 创建',
+          })
 
-            const sourceChapterIds = mergeSourceChapterIds(
-              existingPlace.sourceChapterIds,
-              newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : [])
-            )
+          await prisma.reviewItem.update({
+            where: { id },
+            data: {
+              status: 'APPROVED',
+              reviewerNotes: notes,
+              reviewedBy: adminId,
+              reviewedAt: new Date(),
+            },
+          })
 
-            const previousData = { ...existingPlace }
-
-            const updatedPlace = await (prisma as any).place.update({
-              where: { id: existingPlace.id },
-              data: {
-                aliases: finalAliases,
-                sourceChapterIds,
-                featureType: existingPlace.featureType || newData.featureType || null,
-                coordinatesLng: existingPlace.coordinatesLng || (newData.coordinates?.lng ? Number(newData.coordinates.lng) : null),
-                coordinatesLat: existingPlace.coordinatesLat || (newData.coordinates?.lat ? Number(newData.coordinates.lat) : null),
-                modernLocation: existingPlace.modernLocation || newData.modernLocation || null,
-                modernAddress: existingPlace.modernAddress || newData.modernAddress || null,
-                adminLevel1: existingPlace.adminLevel1 || newData.adminLevel1 || null,
-                adminLevel2: existingPlace.adminLevel2 || newData.adminLevel2 || null,
-                adminLevel3: existingPlace.adminLevel3 || newData.adminLevel3 || null,
-                geographicContext: existingPlace.geographicContext || newData.geographicContext || null,
-                timeRangeBegin: existingPlace.timeRangeBegin || newData.timeRangeBegin || null,
-                timeRangeEnd: existingPlace.timeRangeEnd || newData.timeRangeEnd || null,
-              },
-            })
-
-            await logChange({
-              entityType: 'PLACE' as any,
-              entityId: existingPlace.id,
-              action: 'MERGE',
-              previousData,
-              currentData: updatedPlace,
-              changedBy: adminId,
-              changeReason: notes || `一键全部通过 - 合并自 ReviewItem: ${placeName}`,
-            })
-
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: `已合并到已有地点: ${existingPlace.name}`,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-
-            successCount++
-          } else {
-            // 创建新地点
-            const newPlace = await (prisma as any).place.create({
-              data: {
-                name: placeName,
-                aliases: placeAliases,
-                featureType: newData.featureType || null,
-                coordinatesLng: newData.coordinates?.lng ? Number(newData.coordinates.lng) : null,
-                coordinatesLat: newData.coordinates?.lat ? Number(newData.coordinates.lat) : null,
-                modernLocation: newData.modernLocation || null,
-                modernAddress: newData.modernAddress || null,
-                adminLevel1: newData.adminLevel1 || null,
-                adminLevel2: newData.adminLevel2 || null,
-                adminLevel3: newData.adminLevel3 || null,
-                geographicContext: newData.geographicContext || null,
-                timeRangeBegin: newData.timeRangeBegin || null,
-                timeRangeEnd: newData.timeRangeEnd || null,
-                source: mapPlaceSource(newData.source),
-                sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
-                status: 'PUBLISHED',
-              },
-            })
-
-            await logChange({
-              entityType: 'PLACE' as any,
-              entityId: newPlace.id,
-              action: 'CREATE',
-              currentData: newPlace,
-              changedBy: adminId,
-              changeReason: notes || '一键全部通过 - 从 ReviewItem 创建',
-            })
-
-            await prisma.reviewItem.update({
-              where: { id },
-              data: {
-                status: 'APPROVED',
-                reviewerNotes: notes,
-                reviewedBy: adminId,
-                reviewedAt: new Date(),
-              },
-            })
-
-            successCount++
-          }
+          successCount++
         } else {
           // 未知类型，只更新状态
           await prisma.reviewItem.update({
@@ -1120,80 +999,50 @@ router.post('/items/batch', requireAuth, async (req, res) => {
               errorCount++
               continue
             }
+            if (!newData.chapterId) {
+              errors.push({ id, error: '人物必须关联章节（chapterId）' })
+              errorCount++
+              continue
+            }
 
             const personName = newData.name.trim()
             const personAliases = newData.aliases || []
             
-            // 检查是否已存在同名或别名匹配的人物
-            const existingPerson = await findExistingPerson(personName, personAliases)
-            
-            if (existingPerson) {
-              // 合并到已有人物
-              const mergedAliases = mergeAliases(existingPerson.aliases, personName, personAliases)
-              const finalAliases = mergedAliases.filter(a => a !== existingPerson.name)
-              
-              const biography = mergeBiography(
-                existingPerson.biography,
-                newData.biography?.trim() || ''
-              )
-              
-              const sourceChapterIds = mergeSourceChapterIds(
-                existingPerson.sourceChapterIds,
-                newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : [])
-              )
-              
-              await prisma.person.update({
-                where: { id: existingPerson.id },
-                data: {
-                  aliases: finalAliases,
-                  biography,
-                  sourceChapterIds,
-                  birthYear: existingPerson.birthYear || newData.birthYear || null,
-                  deathYear: existingPerson.deathYear || newData.deathYear || null,
-                },
-              })
-              
-              await prisma.reviewItem.update({
-                where: { id },
-                data: {
-                  status: 'APPROVED',
-                  reviewerNotes: `已合并到已有人物: ${existingPerson.name}`,
-                  reviewedBy: adminId,
-                  reviewedAt: new Date(),
-                },
-              })
-              successCount++
-            } else {
-              const biography = (newData.biography && newData.biography.trim()) 
-                ? newData.biography.trim() 
-                : `（${personName}，暂无详细简介）`
+            const biography = (newData.biography && newData.biography.trim()) 
+              ? newData.biography.trim() 
+              : `（${personName}，暂无详细简介）`
 
-              await prisma.person.create({
-                data: {
-                  name: personName,
-                  aliases: personAliases,
-                  role: mapRole(newData.role),
-                  faction: mapFaction(newData.faction),
-                  birthYear: newData.birthYear || null,
-                  deathYear: newData.deathYear || null,
-                  biography: biography,
-                  portraitUrl: newData.portraitUrl || null,
-                  sourceChapterIds: newData.sourceChapterIds || (newData.chapterId ? [newData.chapterId] : []),
-                  status: 'PUBLISHED',
-                },
-              })
+            await prisma.person.create({
+              data: {
+                chapterId: newData.chapterId,
+                name: personName,
+                aliases: personAliases,
+                zi: newData.zi || null,
+                role: mapRole(newData.role),
+                faction: mapFaction(newData.faction),
+                birthYear: newData.birthYear || null,
+                birthDate: newData.birthDate || null,
+                birthPlace: newData.birthPlace || null,
+                deathYear: newData.deathYear || null,
+                deathPlace: newData.deathPlace || null,
+                nativePlace: newData.nativePlace || null,
+                biography: biography,
+                portraitUrl: newData.portraitUrl || null,
+                relatedParagraphIds: newData.relatedParagraphIds || [],
+                status: 'PUBLISHED',
+              },
+            })
 
-              await prisma.reviewItem.update({
-                where: { id },
-                data: {
-                  status: 'APPROVED',
-                  reviewerNotes: notes,
-                  reviewedBy: adminId,
-                  reviewedAt: new Date(),
-                },
-              })
-              successCount++
-            }
+            await prisma.reviewItem.update({
+              where: { id },
+              data: {
+                status: 'APPROVED',
+                reviewerNotes: notes,
+                reviewedBy: adminId,
+                reviewedAt: new Date(),
+              },
+            })
+            successCount++
           } else if (item.type === 'EVENT') {
             if (!newData.name || !newData.name.trim()) {
               errors.push({ id, error: '事件名称不能为空' })
@@ -1212,96 +1061,45 @@ router.post('/items/batch', requireAuth, async (req, res) => {
               ? newData.summary.trim() 
               : `（${eventName}，暂无详细摘要）`
 
-            // 检查是否已存在相同的事件
-            const existingEvent = await findExistingEvent(
-              eventName,
-              eventTimeRangeStart,
-              newData.locationName
-            )
+            // 章节绑定：直接创建，不合并
+            const createdEvent = await prisma.event.create({
+              data: {
+                name: eventName,
+                type: mapEventType(newData.type),
+                timeRangeStart: eventTimeRangeStart,
+                timeRangeEnd: newData.timeRangeEnd || null,
+                timePrecision: mapTimePrecision(newData.timePrecision),
+                locationName: newData.locationName || null,
+                locationModernName: newData.locationModernName || null,
+                summary: eventSummary,
+                impact: newData.impact || null,
+                actors: newData.actors || [],
+                importance: newData.importance || null,
+                chapterId: newData.chapterId,
+                relatedParagraphs: newData.relatedParagraphs || [],
+                status: 'PUBLISHED',
+              },
+            })
 
-            if (existingEvent) {
-              // 合并到已有事件
-              const mergedSummary = mergeEventSummary(existingEvent.summary, eventSummary)
-              const mergedRelatedParagraphs = mergeRelatedParagraphs(
-                existingEvent.relatedParagraphs,
-                newData.relatedParagraphs || []
-              )
-              const mergedActors = mergeEventActors(
-                (existingEvent.actors as any[]) || [],
-                newData.actors || []
-              )
-              
-              const mergedImpact = newData.impact && newData.impact.trim() && 
-                (!existingEvent.impact || newData.impact.length > existingEvent.impact.length)
-                ? newData.impact.trim()
-                : existingEvent.impact
+            await logChange({
+              entityType: 'EVENT',
+              entityId: createdEvent.id,
+              action: 'CREATE',
+              currentData: createdEvent,
+              changedBy: adminId,
+              changeReason: notes || '批量操作 - 从 ReviewItem 创建',
+            })
 
-              const previousData = { ...existingEvent }
-
-              await prisma.event.update({
-                where: { id: existingEvent.id },
-                data: {
-                  summary: mergedSummary,
-                  impact: mergedImpact,
-                  actors: mergedActors,
-                  relatedParagraphs: mergedRelatedParagraphs,
-                  locationName: existingEvent.locationName || newData.locationName || null,
-                  locationModernName: existingEvent.locationModernName || newData.locationModernName || null,
-                  timeRangeEnd: existingEvent.timeRangeEnd || newData.timeRangeEnd || null,
-                },
-              })
-
-              await logChange({
-                entityType: 'EVENT',
-                entityId: existingEvent.id,
-                action: 'MERGE',
-                previousData,
-                currentData: { ...existingEvent, summary: mergedSummary, impact: mergedImpact, actors: mergedActors, relatedParagraphs: mergedRelatedParagraphs },
-                changedBy: adminId,
-                changeReason: notes || `批量操作 - 合并自 ReviewItem: ${eventName}`,
-              })
-
-              await prisma.reviewItem.update({
-                where: { id },
-                data: {
-                  status: 'APPROVED',
-                  reviewerNotes: `已合并到已有事件: ${existingEvent.name}`,
-                  reviewedBy: adminId,
-                  reviewedAt: new Date(),
-                },
-              })
-              successCount++
-            } else {
-              // 创建新事件
-              await prisma.event.create({
-                data: {
-                  name: eventName,
-                  type: mapEventType(newData.type),
-                  timeRangeStart: eventTimeRangeStart,
-                  timeRangeEnd: newData.timeRangeEnd || null,
-                  timePrecision: mapTimePrecision(newData.timePrecision),
-                  locationName: newData.locationName || null,
-                  locationModernName: newData.locationModernName || null,
-                  summary: eventSummary,
-                  impact: newData.impact || null,
-                  actors: newData.actors || [],
-                  chapterId: newData.chapterId,
-                  relatedParagraphs: newData.relatedParagraphs || [],
-                  status: 'PUBLISHED',
-                },
-              })
-
-              await prisma.reviewItem.update({
-                where: { id },
-                data: {
-                  status: 'APPROVED',
-                  reviewerNotes: notes,
-                  reviewedBy: adminId,
-                  reviewedAt: new Date(),
-                },
-              })
-              successCount++
-            }
+            await prisma.reviewItem.update({
+              where: { id },
+              data: {
+                status: 'APPROVED',
+                reviewerNotes: notes,
+                reviewedBy: adminId,
+                reviewedAt: new Date(),
+              },
+            })
+            successCount++
           } else {
             await prisma.reviewItem.update({
               where: { id },

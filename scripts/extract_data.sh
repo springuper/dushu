@@ -35,10 +35,10 @@ if [ ! -f "$INPUT_FILE" ]; then
     exit 1
 fi
 
-# 加载 .env 文件（如果存在）
-if [ -f "$PROJECT_ROOT/.env" ]; then
+# 加载 backend/.env 文件（如果存在）
+if [ -f "$PROJECT_ROOT/backend/.env" ]; then
     set -a
-    source "$PROJECT_ROOT/.env"
+    source "$PROJECT_ROOT/backend/.env"
     set +a
 fi
 

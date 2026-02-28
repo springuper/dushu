@@ -22,9 +22,10 @@ import {
   Textarea,
   Loader,
   Progress,
+  Tabs,
 } from '@mantine/core'
 import { api } from '../../lib/api'
-import { IconPlayerPlay, IconCheck, IconX, IconAlertCircle } from '@tabler/icons-react'
+import { IconPlayerPlay, IconCheck, IconX, IconAlertCircle, IconLanguage, IconHighlight } from '@tabler/icons-react'
 
 const typeLabels: Record<string, string> = {
   EVENT: '事件',
@@ -99,6 +100,30 @@ function ChapterProcessPage() {
     },
   })
 
+  // 翻译段落
+  const translateMutation = useMutation({
+    mutationFn: async ({ chapterId, force }: { chapterId: string; force?: boolean }) => {
+      const response = await api.post(`/api/admin/chapters/${chapterId}/translate`, { force })
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['chapter-extract-status'] })
+      queryClient.invalidateQueries({ queryKey: ['chapter'] })
+    },
+  })
+
+  // 提取实体提及
+  const extractMentionsMutation = useMutation({
+    mutationFn: async (chapterId: string) => {
+      const response = await api.post(`/api/admin/chapters/${chapterId}/extract-mentions`)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['chapter-extract-status'] })
+      queryClient.invalidateQueries({ queryKey: ['chapter'] })
+    },
+  })
+
   // 批量审核
   const batchApproveMutation = useMutation({
     mutationFn: async ({ ids, notes }: { ids: string[]; notes?: string }) => {
@@ -126,8 +151,17 @@ function ChapterProcessPage() {
 
   const handleExtract = () => {
     if (!selectedChapterId) return
-    console.log('[ChapterProcess] extract start', { chapterId: selectedChapterId })
     extractMutation.mutate(selectedChapterId)
+  }
+
+  const handleTranslate = (force?: boolean) => {
+    if (!selectedChapterId) return
+    translateMutation.mutate({ chapterId: selectedChapterId, force })
+  }
+
+  const handleExtractMentions = () => {
+    if (!selectedChapterId) return
+    extractMentionsMutation.mutate(selectedChapterId)
   }
 
   const handleBatchAction = (action: 'approve' | 'reject') => {
@@ -190,86 +224,99 @@ function ChapterProcessPage() {
           </Stack>
         </Paper>
 
-        {/* 提取操作 */}
         {selectedChapterId && (
-          <Paper p="md" withBorder>
-            <Stack gap="md">
-              <Group justify="space-between">
-                <div>
-                  <Text fw={500}>数据提取</Text>
-                  <Text size="sm" c="dimmed">
-                    从章节文本中提取历史事件和人物信息
-                  </Text>
-                </div>
-                {extractStatus && (
-                  <Badge color={extractStatus.publishedEvents > 0 ? 'green' : 'gray'}>
-                    {extractStatus.publishedEvents > 0 
-                      ? `已有 ${extractStatus.publishedEvents} 个事件` 
-                      : '未提取'}
-                  </Badge>
-                )}
-              </Group>
+          <Tabs defaultValue="extract">
+            <Tabs.List>
+              <Tabs.Tab value="extract" leftSection={<IconPlayerPlay size={16} />}>
+                数据提取
+              </Tabs.Tab>
+              <Tabs.Tab value="translate" leftSection={<IconLanguage size={16} />}>
+                翻译
+              </Tabs.Tab>
+              <Tabs.Tab value="mentions" leftSection={<IconHighlight size={16} />}>
+                实体标注
+              </Tabs.Tab>
+            </Tabs.List>
 
-              {selectedChapter && (
-                <Paper p="sm" withBorder bg="gray.0">
-                  <Text size="sm" fw={500}>{selectedChapter.title}</Text>
-                  <Text size="xs" c="dimmed">
-                    {selectedChapter.paragraphCount || 0} 个段落
-                    {selectedChapter.timeRangeStart && ` | 时间: ${selectedChapter.timeRangeStart}`}
-                  </Text>
-                </Paper>
-              )}
+            <Tabs.Panel value="extract" pt="md">
+              <Stack gap="lg">
+                <Paper p="md" withBorder>
+                  <Stack gap="md">
+                    <Group justify="space-between">
+                      <div>
+                        <Text fw={500}>数据提取</Text>
+                        <Text size="sm" c="dimmed">
+                          从章节文本中提取历史事件和人物信息
+                        </Text>
+                      </div>
+                      {extractStatus && (
+                        <Badge color={(extractStatus as any).counts?.publishedEvents > 0 ? 'green' : 'gray'}>
+                          {(extractStatus as any).counts?.publishedEvents > 0
+                            ? `已有 ${(extractStatus as any).counts.publishedEvents} 个事件`
+                            : '未提取'}
+                        </Badge>
+                      )}
+                    </Group>
 
-              <Button
-                leftSection={<IconPlayerPlay size={16} />}
-                onClick={handleExtract}
-                loading={extractMutation.isPending}
-                fullWidth
-              >
-                开始提取事件和人物
-              </Button>
+                    {selectedChapter && (
+                      <Paper p="sm" withBorder bg="gray.0">
+                        <Text size="sm" fw={500}>{selectedChapter.title}</Text>
+                        <Text size="xs" c="dimmed">
+                          {selectedChapter.paragraphCount || 0} 个段落
+                          {selectedChapter.timeRangeStart && ` | 时间: ${selectedChapter.timeRangeStart}`}
+                        </Text>
+                      </Paper>
+                    )}
 
-              {extractMutation.isPending && (
-                <Alert icon={<Loader size={16} />} color="blue">
-                  <Stack gap="xs">
-                    <Text size="sm">正在使用 AI 提取数据，请稍候...</Text>
-                    <Progress value={100} animated />
+                    <Button
+                      leftSection={<IconPlayerPlay size={16} />}
+                      onClick={handleExtract}
+                      loading={extractMutation.isPending}
+                      fullWidth
+                    >
+                      开始提取事件和人物
+                    </Button>
+
+                    {extractMutation.isPending && (
+                      <Alert icon={<Loader size={16} />} color="blue">
+                        <Stack gap="xs">
+                          <Text size="sm">正在使用 AI 提取数据，请稍候...</Text>
+                          <Progress value={100} animated />
+                        </Stack>
+                      </Alert>
+                    )}
+
+                    {extractMutation.data && (
+                      <Alert icon={<IconCheck size={16} />} color="green">
+                        <Text fw={500}>提取完成</Text>
+                        <Group gap="lg" mt="xs">
+                          <Text size="sm">
+                            <Badge color="blue" mr="xs">{(extractMutation.data as any).counts?.event || 0}</Badge>
+                            事件
+                          </Text>
+                          <Text size="sm">
+                            <Badge color="purple" mr="xs">{(extractMutation.data as any).counts?.person || 0}</Badge>
+                            人物
+                          </Text>
+                        </Group>
+                        {(extractMutation.data as any)?.meta?.truncatedEvents?.length > 0 && (
+                          <Text size="xs" c="dimmed" mt="xs">
+                            注：{(extractMutation.data as any).meta.truncatedEvents.length} 个事件因篇幅限制未能详述
+                          </Text>
+                        )}
+                      </Alert>
+                    )}
+
+                    {extractMutation.error && (
+                      <Alert icon={<IconAlertCircle size={16} />} color="red">
+                        提取失败: {(extractMutation.error as any)?.response?.data?.error || (extractMutation.error as Error).message}
+                      </Alert>
+                    )}
                   </Stack>
-                </Alert>
-              )}
+                </Paper>
 
-              {extractMutation.data && (
-                <Alert icon={<IconCheck size={16} />} color="green">
-                  <Text fw={500}>提取完成</Text>
-                  <Group gap="lg" mt="xs">
-                    <Text size="sm">
-                      <Badge color="blue" mr="xs">{extractMutation.data.counts?.event || 0}</Badge>
-                      事件
-                    </Text>
-                    <Text size="sm">
-                      <Badge color="purple" mr="xs">{extractMutation.data.counts?.person || 0}</Badge>
-                      人物
-                    </Text>
-                  </Group>
-                  {extractMutation.data.meta?.truncatedEvents?.length > 0 && (
-                    <Text size="xs" c="dimmed" mt="xs">
-                      注：{extractMutation.data.meta.truncatedEvents.length} 个事件因篇幅限制未能详述
-                    </Text>
-                  )}
-                </Alert>
-              )}
-
-              {extractMutation.error && (
-                <Alert icon={<IconAlertCircle size={16} />} color="red">
-                  提取失败: {(extractMutation.error as any)?.response?.data?.error || (extractMutation.error as Error).message}
-                </Alert>
-              )}
-            </Stack>
-          </Paper>
-        )}
-
-        {/* 待审核列表 */}
-        <Paper p="md" withBorder>
+                {/* 待审核列表 */}
+                <Paper p="md" withBorder>
           <Stack gap="md">
             <Group justify="space-between">
               <div>
@@ -392,6 +439,156 @@ function ChapterProcessPage() {
             )}
           </Stack>
         </Paper>
+              </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="translate" pt="md">
+              <Paper p="md" withBorder>
+                <Stack gap="md">
+                  <Group justify="space-between">
+                    <div>
+                      <Text fw={500}>段落翻译</Text>
+                      <Text size="sm" c="dimmed">
+                        将文言文段落翻译为现代汉语，便于读者理解
+                      </Text>
+                    </div>
+                    {extractStatus && (
+                      <Badge color={(extractStatus as any).counts?.translatedCount === (extractStatus as any).counts?.totalParagraphs ? 'green' : 'gray'}>
+                        {(extractStatus as any).counts?.translatedCount ?? 0} / {(extractStatus as any).counts?.totalParagraphs ?? 0} 已翻译
+                      </Badge>
+                    )}
+                  </Group>
+
+                  {selectedChapter && (
+                    <Paper p="sm" withBorder bg="gray.0">
+                      <Text size="sm" fw={500}>{selectedChapter.title}</Text>
+                      <Text size="xs" c="dimmed">
+                        {selectedChapter.paragraphCount || 0} 个段落
+                      </Text>
+                    </Paper>
+                  )}
+
+                  <Group>
+                    <Button
+                      leftSection={<IconLanguage size={16} />}
+                      onClick={() => handleTranslate(false)}
+                      loading={translateMutation.isPending}
+                    >
+                      开始翻译
+                    </Button>
+                    <Button
+                      variant="light"
+                      leftSection={<IconLanguage size={16} />}
+                      onClick={() => handleTranslate(true)}
+                      loading={translateMutation.isPending}
+                    >
+                      重新翻译（覆盖已有）
+                    </Button>
+                  </Group>
+
+                  {translateMutation.isPending && (
+                    <Alert icon={<Loader size={16} />} color="blue">
+                      <Stack gap="xs">
+                        <Text size="sm">正在使用 AI 翻译，请稍候...</Text>
+                        <Progress value={100} animated />
+                      </Stack>
+                    </Alert>
+                  )}
+
+                  {translateMutation.data && (
+                    <Alert icon={<IconCheck size={16} />} color="green">
+                      <Text fw={500}>翻译完成</Text>
+                      <Text size="sm">
+                        已翻译 {(translateMutation.data as any).translatedCount ?? 0} 个段落
+                      </Text>
+                    </Alert>
+                  )}
+
+                  {translateMutation.error && (
+                    <Alert icon={<IconAlertCircle size={16} />} color="red">
+                      翻译失败: {(translateMutation.error as any)?.response?.data?.error || (translateMutation.error as Error).message}
+                    </Alert>
+                  )}
+                </Stack>
+              </Paper>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="mentions" pt="md">
+              <Paper p="md" withBorder>
+                <Stack gap="md">
+                  <Group justify="space-between">
+                    <div>
+                      <Text fw={500}>实体标注</Text>
+                      <Text size="sm" c="dimmed">
+                        精确标注原文中人物、地点的提及位置（需先完成数据提取并审核通过）
+                      </Text>
+                    </div>
+                    {extractStatus && (
+                      <Badge color={(extractStatus as any).counts?.mentionCount > 0 ? 'green' : 'gray'}>
+                        {(extractStatus as any).counts?.mentionCount ?? 0} 处标注
+                      </Badge>
+                    )}
+                  </Group>
+
+                  {extractStatus && (
+                    <Text size="sm" c="dimmed">
+                      本章有人物 {(extractStatus as any).counts?.personCount ?? 0} 个、地点 {(extractStatus as any).counts?.placeCount ?? 0} 个
+                    </Text>
+                  )}
+
+                  {selectedChapter && (
+                    <Paper p="sm" withBorder bg="gray.0">
+                      <Text size="sm" fw={500}>{selectedChapter.title}</Text>
+                      <Text size="xs" c="dimmed">
+                        {selectedChapter.paragraphCount || 0} 个段落
+                      </Text>
+                    </Paper>
+                  )}
+
+                  <Button
+                    leftSection={<IconHighlight size={16} />}
+                    onClick={handleExtractMentions}
+                    loading={extractMentionsMutation.isPending}
+                    disabled={!extractStatus || ((extractStatus as any).counts?.personCount === 0 && (extractStatus as any).counts?.placeCount === 0)}
+                    fullWidth
+                  >
+                    开始标注人物和地点
+                  </Button>
+
+                  {extractStatus && (extractStatus as any).counts?.personCount === 0 && (extractStatus as any).counts?.placeCount === 0 && (
+                    <Alert color="yellow">
+                      请先在「数据提取」标签完成提取，并审核通过至少一个人物或地点
+                    </Alert>
+                  )}
+
+                  {extractMentionsMutation.isPending && (
+                    <Alert icon={<Loader size={16} />} color="blue">
+                      <Stack gap="xs">
+                        <Text size="sm">正在使用 AI 标注实体，请稍候...</Text>
+                        <Progress value={100} animated />
+                      </Stack>
+                    </Alert>
+                  )}
+
+                  {extractMentionsMutation.data && (
+                    <Alert icon={<IconCheck size={16} />} color="green">
+                      <Text fw={500}>标注完成</Text>
+                      <Text size="sm">
+                        共标注 {(extractMentionsMutation.data as any).mentionCount ?? 0} 处
+                      </Text>
+                    </Alert>
+                  )}
+
+                  {extractMentionsMutation.error && (
+                    <Alert icon={<IconAlertCircle size={16} />} color="red">
+                      标注失败: {(extractMentionsMutation.error as any)?.response?.data?.error || (extractMentionsMutation.error as Error).message}
+                    </Alert>
+                  )}
+                </Stack>
+              </Paper>
+            </Tabs.Panel>
+          </Tabs>
+        )}
       </Stack>
 
       {/* 批量操作确认模态框 */}

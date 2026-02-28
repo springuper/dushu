@@ -17,14 +17,21 @@
   - 从历史文本中提取人物、关系、地点、事件数据
   - 支持 OpenAI 和 Google Gemini API
 
+**API 连通性测试**：
+- **`test_openai_api.js`** - 测试 OpenAI API Key
+- **`test_gemini_api.js`** - 测试 Google Gemini API Key
+
 ### 便捷脚本
 
-- **`download_first_chapter_auto.sh`** - 自动下载第一个章节（一键下载《史记·高祖本纪》）
+- **`download_and_prepare.sh`** - 下载 + 预处理一键完成（推荐）
+  - 使用方式：`./scripts/download_and_prepare.sh --url "..." --book "史记" --chapter "高祖本纪"`
+  - 输出 JSON 到 `data/processed/chapters/`，可直接在后台导入
+- **`download_first_chapter_auto.sh`** - 仅下载《史记·高祖本纪》
 - **`extract_data.sh`** - 数据提取便捷脚本（自动提取所有类型数据）
 
 ### 环境设置
 
-- **`setup_env.sh`** - 环境变量设置脚本（创建 .env 文件）
+- **`setup_env.sh`** - 环境变量设置脚本（创建 backend/.env 文件）
 
 ## 📖 使用指南
 

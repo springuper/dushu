@@ -122,15 +122,20 @@ router.post('/', requireAuth, async (req, res) => {
       timeRangeBegin,
       timeRangeEnd,
       status = 'DRAFT',
-      sourceChapterIds = [],
+      chapterId,
+      relatedParagraphIds = [],
     } = req.body
 
     if (!name) {
       return res.status(400).json({ error: 'Name is required' })
     }
+    if (!chapterId) {
+      return res.status(400).json({ error: '章节（chapterId）为必填' })
+    }
 
     const place = await prisma.place.create({
       data: {
+        chapterId,
         name,
         aliases: Array.isArray(aliases) ? aliases : [],
         coordinatesLng: coordinatesLng ? Number(coordinatesLng) : null,
@@ -146,8 +151,8 @@ router.post('/', requireAuth, async (req, res) => {
         chgisId,
         timeRangeBegin,
         timeRangeEnd,
+        relatedParagraphIds: Array.isArray(relatedParagraphIds) ? relatedParagraphIds : [],
         status: status as ContentStatus,
-        sourceChapterIds: Array.isArray(sourceChapterIds) ? sourceChapterIds : [],
       },
     })
 
@@ -203,7 +208,7 @@ router.put('/:id', requireAuth, async (req, res) => {
       timeRangeBegin,
       timeRangeEnd,
       status,
-      sourceChapterIds,
+      relatedParagraphIds,
     } = req.body
 
     const updateData: any = {}
@@ -223,7 +228,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     if (timeRangeBegin !== undefined) updateData.timeRangeBegin = timeRangeBegin
     if (timeRangeEnd !== undefined) updateData.timeRangeEnd = timeRangeEnd
     if (status !== undefined) updateData.status = status as ContentStatus
-    if (sourceChapterIds !== undefined) updateData.sourceChapterIds = Array.isArray(sourceChapterIds) ? sourceChapterIds : []
+    if (relatedParagraphIds !== undefined) updateData.relatedParagraphIds = Array.isArray(relatedParagraphIds) ? relatedParagraphIds : []
 
     const updatedPlace = await prisma.place.update({
       where: { id },

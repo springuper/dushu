@@ -1,8 +1,8 @@
 /**
  * 事件时间轴组件
- * 显示章节相关的历史事件，按时间排序
+ * 显示章节相关的历史事件，按时间排序，支持等级筛选
  */
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Stack,
   Text,
@@ -11,20 +11,22 @@ import {
   Group,
   ScrollArea,
   Loader,
-  Alert,
   Box,
   Timeline,
   Tooltip,
   Button,
+  SegmentedControl,
 } from '@mantine/core'
-import { IconSword, IconCrown, IconUser, IconDots, IconChevronDown, IconChevronUp } from '@tabler/icons-react'
-import { useQuery } from '@tanstack/react-query'
-import { getEventsByChapter, type Event } from '../../lib/api'
+import { IconSword, IconCrown, IconUser, IconDots, IconChevronDown, IconChevronUp, IconInfoCircle, IconBook2 } from '@tabler/icons-react'
+import { type Event, type EventImportanceFilter, importanceLabels } from '../../lib/api'
 import { LocationMapModal } from './LocationMapModal'
 
 interface EventTimelineProps {
-  chapterId: string
+  events?: Event[]
+  eventImportanceFilter: EventImportanceFilter
+  onEventImportanceFilterChange?: (filter: EventImportanceFilter) => void
   onEventClick?: (event: Event) => void
+  onEventDetailClick?: (event: Event) => void
   onJumpToParagraph?: (paragraphId: string) => void
   selectedEventId?: string
 }
@@ -53,21 +55,36 @@ const eventTypeNames: Record<string, string> = {
   OTHER: '其他',
 }
 
+// 精简=L1, 中等=L1+L2, 详细=L1+L2+L3
+const IMPORTANCE_OPTIONS: { value: EventImportanceFilter; label: string }[] = [
+  { value: 'L1', label: '精简' },
+  { value: 'L1,L2', label: '中等' },
+  { value: 'L1,L2,L3', label: '详细' },
+]
+
 export function EventTimeline({
-  chapterId,
+  events = [],
+  eventImportanceFilter,
+  onEventImportanceFilterChange,
   onEventClick,
+  onEventDetailClick,
   onJumpToParagraph,
   selectedEventId,
 }: EventTimelineProps) {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
   const [mapModalOpened, setMapModalOpened] = useState(false)
   const [selectedLocation, setSelectedLocation] = useState<{ name: string; year?: string; event?: Event } | null>(null)
-  
-  const { data: events, isLoading, error } = useQuery({
-    queryKey: ['events', 'by-chapter', chapterId],
-    queryFn: () => getEventsByChapter(chapterId),
-    enabled: !!chapterId,
-  })
+  const eventItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const eventList = events ?? []
+
+  // 选中事件时滚动到该事件
+  useEffect(() => {
+    if (!selectedEventId || eventList.length === 0) return
+    const el = eventItemRefs.current.get(selectedEventId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [selectedEventId, eventList.length])
 
   // 切换卡片展开状态
   const toggleExpand = (eventId: string, e: React.MouseEvent) => {
@@ -117,6 +134,8 @@ export function EventTimeline({
     setMapModalOpened(true)
   }
 
+  // events 为 undefined 表示父组件正在加载
+  const isLoading = events === undefined
   if (isLoading) {
     return (
       <Stack align="center" py="xl">
@@ -126,33 +145,32 @@ export function EventTimeline({
     )
   }
 
-  if (error) {
-    return (
-      <Alert color="red" title="加载失败">
-        无法加载事件列表
-      </Alert>
-    )
-  }
-
-  if (!events || events.length === 0) {
-    return (
-      <Box py="xl">
-        <Text size="sm" c="dimmed" ta="center">
-          暂无事件数据
-        </Text>
-      </Box>
-    )
-  }
-
   return (
     <Stack gap="md" h="100%" style={{ minHeight: 0 }}>
-      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-        共 {events.length} 个事件
-      </Text>
+      <Group justify="space-between" wrap="nowrap" style={{ flexShrink: 0 }}>
+        <Text size="xs" c="dimmed">
+          共 {eventList.length} 个事件
+        </Text>
+        {onEventImportanceFilterChange && (
+          <SegmentedControl
+            size="xs"
+            value={eventImportanceFilter}
+            onChange={(v) => onEventImportanceFilterChange(v as EventImportanceFilter)}
+            data={IMPORTANCE_OPTIONS}
+          />
+        )}
+      </Group>
 
+      {eventList.length === 0 ? (
+        <Box py="xl">
+          <Text size="sm" c="dimmed" ta="center">
+            暂无事件数据
+          </Text>
+        </Box>
+      ) : (
       <ScrollArea style={{ flex: 1, minHeight: 0 }} offsetScrollbars>
         <Timeline active={-1} bulletSize={24} lineWidth={2}>
-          {events.map((event, index) => (
+          {eventList.map((event) => (
             <Timeline.Item
               key={event.id}
               bullet={eventTypeIcons[event.type] || <IconDots size={14} />}
@@ -177,9 +195,24 @@ export function EventTimeline({
                   >
                     {eventTypeNames[event.type] || event.type}
                   </Badge>
+                  {event.importance && (
+                    <Badge
+                      size="xs"
+                      variant="outline"
+                      color={event.importance === 'L1' ? 'red' : event.importance === 'L2' ? 'orange' : 'gray'}
+                    >
+                      {importanceLabels[event.importance] || event.importance}
+                    </Badge>
+                  )}
                 </Group>
               }
             >
+              <Box
+                ref={(el) => {
+                  if (el) eventItemRefs.current.set(event.id, el)
+                }}
+                data-event-id={event.id}
+              >
               <Card
                 padding="xs"
                 radius="sm"
@@ -230,7 +263,6 @@ export function EventTimeline({
                         <Button
                           variant="subtle"
                           size="xs"
-                          compact
                           leftSection={expandedCards.has(event.id) ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
                           onClick={(e) => toggleExpand(event.id, e)}
                           style={{ alignSelf: 'flex-start', padding: '2px 8px' }}
@@ -254,25 +286,36 @@ export function EventTimeline({
                     </Group>
                   )}
 
-                  {event.relatedParagraphs && event.relatedParagraphs.length > 0 && (
-                    <Text
-                      size="xs"
-                      c="blue"
-                      style={{ cursor: 'pointer' }}
-                      onClick={(e) => {
+                  {(event.relatedParagraphs?.length > 0 || onEventDetailClick) && (
+                    <Group gap="xs">
+                    {event.relatedParagraphs && event.relatedParagraphs.length > 0 && (
+                      <Group gap={4} style={{ cursor: 'pointer' }} onClick={(e) => {
                         e.stopPropagation()
                         onJumpToParagraph?.(event.relatedParagraphs[0])
-                      }}
-                    >
-                      → 查看原文
-                    </Text>
+                      }}>
+                        <IconBook2 size={12} />
+                        <Text size="xs" c="blue">查看原文</Text>
+                      </Group>
+                    )}
+                    {onEventDetailClick && (
+                      <Group gap={4} style={{ cursor: 'pointer' }} onClick={(e) => {
+                        e.stopPropagation()
+                        onEventDetailClick(event)
+                      }}>
+                        <IconInfoCircle size={12} />
+                        <Text size="xs" c="blue">查看详情</Text>
+                      </Group>
+                    )}
+                    </Group>
                   )}
                 </Stack>
               </Card>
+              </Box>
             </Timeline.Item>
           ))}
         </Timeline>
       </ScrollArea>
+      )}
 
       {/* 地点地图模态窗口 */}
       {selectedLocation && (

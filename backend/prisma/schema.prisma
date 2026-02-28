@@ -99,6 +99,8 @@ model Chapter {
   book           Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
   paragraphs     Paragraph[]
   events         Event[]
+  persons        Person[]
+  places         Place[]
 
   @@index([bookId])
   @@index([order])
@@ -110,14 +112,33 @@ model Paragraph {
   chapterId     String
   order         Int      // 段落顺序
   text          String   @db.Text // 段落原文
+  translation   String?  @db.Text  // 现代文翻译
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   chapter       Chapter      @relation(fields: [chapterId], references: [id], onDelete: Cascade)
   annotations   Annotation[]
+  mentions      TextMention[]
 
   @@index([chapterId])
   @@index([order])
+}
+
+// 段落内实体提及（人物、地点精确标注，由 LLM 提取）
+model TextMention {
+  id          String   @id @default(uuid())
+  paragraphId String
+  entityType  String   // "PERSON" | "PLACE"
+  entityId    String   // Person.id 或 Place.id
+  startIndex  Int      // 字符起始位置（含）
+  endIndex    Int      // 字符结束位置（不含）
+  createdAt   DateTime @default(now())
+
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+
+  @@unique([paragraphId, startIndex, endIndex, entityType, entityId])
+  @@index([paragraphId])
+  @@index([entityType, entityId])
 }
 
 // 注释
@@ -182,69 +203,81 @@ model Event {
   @@index([importance])
 }
 
-// 人物 - 跨章节聚合信息
+// 人物 - 章节绑定，每条记录属于一个章节
 model Person {
-  id               String        @id @default(uuid())
-  name             String        // 姓名
-  aliases          String[]      // 别称数组（PostgreSQL 数组）
-  role             PersonRole
-  faction          Faction
-  birthYear        String?       // 生年
-  deathYear        String?       // 卒年
-  biography        String        @db.Text // 简介
-  portraitUrl      String?       // 画像链接
-  
-  // 来源追踪
-  sourceChapterIds String[]      // 信息来源章节ID列表
-  
-  status           ContentStatus @default(DRAFT)
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id                 String        @id @default(uuid())
+  chapterId          String        // 所属章节
+  name               String        // 姓名
+  aliases            String[]      @default([])  // 别称
+  zi                 String?       // 字，如「子房」
+  role               PersonRole
+  faction            Faction
+  birthYear          String?       // 生年
+  birthDate          String?       // 生辰/诞辰（更精确）
+  birthPlace         String?       // 出生地
+  deathYear          String?       // 卒年
+  deathPlace         String?       // 逝世地
+  nativePlace        String?       // 籍贯
+  biography          String        @db.Text // 简介
+  portraitUrl        String?       // 画像链接
+  relatedParagraphIds String[]      @default([])  // 相关段落ID
 
+  status             ContentStatus @default(DRAFT)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  chapter            Chapter       @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@unique([chapterId, name])
+  @@index([chapterId])
   @@index([name])
   @@index([faction])
   @@index([role])
   @@index([status])
 }
 
-// 地点 - 跨章节聚合信息（地点知识库）
+// 地点 - 章节绑定，每条记录属于一个章节
 model Place {
-  id                String        @id @default(uuid())
-  name              String        @unique // 历史地名，如"鸿门"
-  aliases           String[]      // 别名/其他称呼，如["鸿门堡", "鸿门宴遗址"]
-  
-  // 坐标信息
-  coordinatesLng    Float?        // 经度
-  coordinatesLat    Float?       // 纬度
-  
-  // 现代位置信息
-  modernLocation    String?       @db.Text // 现代位置描述，如"陕西省西安市临潼区骊山北麓"
-  modernAddress     String?       // 可搜索的现代地址，如"鸿门宴遗址"
-  
-  // 历史行政隶属（按层级）
-  adminLevel1       String?       // 一级行政隶属，如"骊邑附近区域"
-  adminLevel2       String?       // 二级行政隶属，如"内史"
-  adminLevel3       String?       // 三级行政隶属，如"秦朝"
-  
-  // 地理背景
-  geographicContext String?       @db.Text // 地理背景描述（100-200字）
-  featureType       String?       // 地点类型，如"地名/军事节点"、"县"、"郡"
-  
-  // 数据来源
-  source            PlaceSource   @default(CHGIS) // 数据来源
-  chgisId           String?       // CHGIS ID（如果来自 CHGIS）
-  
-  // 来源追踪
-  sourceChapterIds  String[]      // 信息来源章节ID列表
-  
-  // 时间范围（该地点在历史中的存在时间）
-  timeRangeBegin    String?       // 开始年份，如"-223"
-  timeRangeEnd      String?       // 结束年份，如"1264"
-  
-  status            ContentStatus @default(DRAFT)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  id                 String        @id @default(uuid())
+  chapterId          String        // 所属章节
+  name               String        // 历史地名，如"鸿门"
+  aliases            String[]      @default([])  // 别名
 
+  // 坐标信息
+  coordinatesLng     Float?        // 经度
+  coordinatesLat     Float?        // 纬度
+
+  // 现代位置信息
+  modernLocation     String?       @db.Text
+  modernAddress     String?       // 可搜索的现代地址
+
+  // 历史行政隶属
+  adminLevel1        String?
+  adminLevel2        String?
+  adminLevel3        String?
+
+  // 地理背景
+  geographicContext  String?       @db.Text
+  featureType        String?
+
+  // 数据来源
+  source             PlaceSource   @default(CHGIS)
+  chgisId            String?
+
+  // 时间范围
+  timeRangeBegin     String?
+  timeRangeEnd       String?
+
+  relatedParagraphIds String[]      @default([])  // 相关段落ID
+
+  status             ContentStatus @default(DRAFT)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  chapter            Chapter       @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@unique([chapterId, name])
+  @@index([chapterId])
   @@index([name])
   @@index([source])
   @@index([status])

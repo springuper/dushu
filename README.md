@@ -112,39 +112,26 @@ npx prisma migrate dev --name init
 
 #### 后端环境变量
 
-后端需要创建 `.env` 文件（已自动生成）：
-
-```env
-PORT=3001
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dushu?schema=public"
-NODE_ENV=development
-```
-
-**注意**：如果使用 Podman Compose，`DATABASE_URL` 已配置为默认值。如果使用本地 PostgreSQL，请根据实际情况修改。
-
-#### Python 脚本环境变量（数据准备）
-
-数据准备脚本使用 `.env` 文件管理 API Key：
+后端和脚本统一使用 `backend/.env`：
 
 ```bash
-# 从模板创建 .env 文件
+# 从模板创建 backend/.env
 ./scripts/setup_env.sh
 
-# 编辑 .env 文件，填入 API Key
-nano .env
+# 编辑填入配置
+nano backend/.env
 ```
 
-在 `.env` 文件中设置：
+需配置项：
 
 ```env
-# Google Gemini API（推荐）
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dushu?schema=public"
+# LLM 二选一
 GOOGLE_API_KEY=your-api-key-here
-
-# 或 OpenAI API
-OPENAI_API_KEY=your-api-key-here
+# OPENAI_API_KEY=your-openai-api-key-here
 ```
 
-**注意**：`.env` 文件已加入 `.gitignore`，不会被提交到 Git。参考 `.env.example` 了解所有可配置项。
+**注意**：`backend/.env` 已加入 `.gitignore`。参考 `backend/.env.example` 了解所有可配置项。
 
 ## 项目结构
 

@@ -217,18 +217,27 @@ router.post('/', requireAuth, async (req, res) => {
     if (!data.name || !data.biography) {
       return res.status(400).json({ error: 'Name and biography are required' })
     }
+    if (!data.chapterId) {
+      return res.status(400).json({ error: '章节（chapterId）为必填' })
+    }
 
     const person = await prisma.person.create({
       data: {
+        chapterId: data.chapterId,
         name: data.name,
         aliases: data.aliases || [],
+        zi: data.zi || null,
         role: mapRole(data.role),
         faction: mapFaction(data.faction),
         birthYear: data.birthYear || null,
+        birthDate: data.birthDate || null,
+        birthPlace: data.birthPlace || null,
         deathYear: data.deathYear || null,
+        deathPlace: data.deathPlace || null,
+        nativePlace: data.nativePlace || null,
         biography: data.biography,
         portraitUrl: data.portraitUrl || null,
-        sourceChapterIds: data.sourceChapterIds || [],
+        relatedParagraphIds: data.relatedParagraphIds || [],
         status: data.status || 'DRAFT',
       },
     })
@@ -267,13 +276,18 @@ router.put('/:id', requireAuth, async (req, res) => {
       data: {
         name: data.name,
         aliases: data.aliases,
+        zi: data.zi,
         role: data.role ? mapRole(data.role) : undefined,
         faction: data.faction ? mapFaction(data.faction) : undefined,
         birthYear: data.birthYear,
+        birthDate: data.birthDate,
+        birthPlace: data.birthPlace,
         deathYear: data.deathYear,
+        deathPlace: data.deathPlace,
+        nativePlace: data.nativePlace,
         biography: data.biography,
         portraitUrl: data.portraitUrl,
-        sourceChapterIds: data.sourceChapterIds,
+        relatedParagraphIds: data.relatedParagraphIds,
         status: data.status,
       },
     })
@@ -491,107 +505,13 @@ router.post('/merge', requireAuth, async (req, res) => {
     allAliases.delete(targetPerson.name)
     const mergedAliases = Array.from(allAliases).filter(Boolean)
 
-    // 合并来源章节 ID
-    const allSourceChapterIds = new Set(targetPerson.sourceChapterIds)
-    for (const sourcePerson of sourcePersons) {
-      for (const chapterId of sourcePerson.sourceChapterIds) {
-        allSourceChapterIds.add(chapterId)
-      }
-    }
-    const mergedSourceChapterIds = Array.from(allSourceChapterIds)
-
-    // 选择最长的简介
-    let bestBiography = targetPerson.biography
-    for (const sourcePerson of sourcePersons) {
-      if (sourcePerson.biography && 
-          !sourcePerson.biography.startsWith('（') &&
-          sourcePerson.biography.length > bestBiography.length) {
-        bestBiography = sourcePerson.biography
-      }
-    }
-
-    // 更新目标人物
-    const updatedPerson = await prisma.person.update({
-      where: { id: targetId },
-      data: {
-        aliases: mergedAliases,
-        sourceChapterIds: mergedSourceChapterIds,
-        biography: bestBiography,
-        // 如果目标人物没有生卒年，使用源人物的
-        birthYear: targetPerson.birthYear || sourcePersons.find(p => p.birthYear)?.birthYear || null,
-        deathYear: targetPerson.deathYear || sourcePersons.find(p => p.deathYear)?.deathYear || null,
-      },
-    })
-
-    // 更新事件中的 actors.personId
-    const events = await prisma.event.findMany({
-      where: { status: 'PUBLISHED' },
-    })
-
-    let updatedEventCount = 0
-    for (const event of events) {
-      const actors = event.actors as any[]
-      if (!actors) continue
-
-      let needsUpdate = false
-      const updatedActors = actors.map(actor => {
-        // 如果 actor 指向源人物，更新为目标人物
-        if (sourceIds.includes(actor.personId)) {
-          needsUpdate = true
-          return { ...actor, personId: targetId }
-        }
-        // 如果 actor 名称匹配源人物的名称或别名
-        for (const sourcePerson of sourcePersons) {
-          if (actor.name === sourcePerson.name || sourcePerson.aliases.includes(actor.name)) {
-            needsUpdate = true
-            return { ...actor, personId: targetId }
-          }
-        }
-        return actor
-      })
-
-      if (needsUpdate) {
-        await prisma.event.update({
-          where: { id: event.id },
-          data: { actors: updatedActors },
-        })
-        updatedEventCount++
-      }
-    }
-
-    // 删除源人物
-    await prisma.person.deleteMany({
-      where: { id: { in: sourceIds } },
-    })
-
-    // 记录变更日志
-    await logChange({
-      entityType: 'PERSON',
-      entityId: targetId,
-      action: 'MERGE',
-      previousData,
-      currentData: updatedPerson,
-      changedBy: adminId,
-      changeReason: `合并自: ${sourcePersons.map(p => p.name).join(', ')}`,
-      mergedFrom: sourceIds,
-    })
-
-    logger.info('Persons merged', {
-      targetId,
-      sourceIds,
-      mergedAliasCount: mergedAliases.length,
-      updatedEventCount,
-    })
-
-    res.json({
-      success: true,
-      mergedPerson: updatedPerson,
-      deletedCount: sourcePersons.length,
-      updatedEventCount,
+    // 章节绑定设计：人物不可合并，每条记录属于单一章节
+    return res.status(400).json({
+      error: '章节绑定设计下不支持人物合并，请使用 AI 聚合功能按需汇总',
     })
   } catch (error: any) {
     logger.error('Merge persons error', { error: error.message })
-    res.status(500).json({ error: 'Internal server error' })
+    res.status(500).json({ error: error.message || 'Internal server error' })
   }
 })
 

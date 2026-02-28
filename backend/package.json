@@ -16,6 +16,13 @@
     "deduplicate-events": "tsx scripts/deduplicate_events.ts",
     "fix-han-calendar-dates": "tsx scripts/fix_han_calendar_dates.ts",
     "fix-han-calendar-dates:dry-run": "tsx scripts/fix_han_calendar_dates.ts --dry-run",
+    "merge-simplified-duplicates": "tsx scripts/merge_simplified_duplicates.ts",
+    "merge-simplified-duplicates:dry-run": "tsx scripts/merge_simplified_duplicates.ts --dry-run",
+    "merge-simplified-duplicates:cross-chapter": "tsx scripts/merge_simplified_duplicates.ts --cross-chapter",
+    "normalize-person-names": "tsx scripts/normalize_person_names.ts",
+    "normalize-person-names:dry-run": "tsx scripts/normalize_person_names.ts --dry-run",
+    "fix-place-coordinates": "tsx scripts/fix_place_coordinates.ts",
+    "fix-place-coordinates:dry-run": "tsx scripts/fix_place_coordinates.ts --dry-run",
     "studio": "prisma studio",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -34,8 +41,10 @@
     "express-session": "^1.18.2",
     "multer": "^2.0.2",
     "openai": "^6.10.0",
+    "opencc-js": "^1.0.5",
     "pg": "^8.16.3",
-    "prisma": "6.19.0"
+    "prisma": "6.19.0",
+    "undici": "^7.22.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

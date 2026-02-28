@@ -7,7 +7,6 @@
  */
 import { LLMService } from './llm'
 import { createLogger } from './logger'
-import { prisma } from './prisma'
 import {
   MAX_WINDOW_CHARS,
   LONG_WINDOW_CHARS,
@@ -16,7 +15,6 @@ import {
   chunkParagraphsWithIds,
   cleanLocationName,
   extractLocationAlias,
-  convertPlaceToExtracted,
 } from './utils'
 import {
   buildEventPrompt,
@@ -73,12 +71,17 @@ export interface ExtractedEvent {
 export interface ExtractedPerson {
   name: string
   aliases: string[]
+  zi?: string
   role: 'MONARCH' | 'ADVISOR' | 'GENERAL' | 'CIVIL_OFFICIAL' | 'MILITARY_OFFICIAL' | 'RELATIVE' | 'EUNUCH' | 'OTHER'
   faction: 'HAN' | 'CHU' | 'NEUTRAL' | 'OTHER'
   biography: string
   birthYear?: string
+  birthDate?: string
+  birthPlace?: string
   deathYear?: string
-  existingId?: string  // 如果匹配到已有记录，记录其 ID
+  deathPlace?: string
+  nativePlace?: string
+  relatedParagraphIds?: string[]
 }
 
 export interface ExtractedPlace {
@@ -96,7 +99,7 @@ export interface ExtractedPlace {
   timeRangeEnd?: string
   chgisId?: string
   source?: 'CHGIS' | 'LLM' | 'HYBRID'
-  existingId?: string  // 如果匹配到已有记录，记录其 ID
+  relatedParagraphIds?: string[]
 }
 
 export interface ExtractionResult {
@@ -168,12 +171,10 @@ export class LLMExtractor {
       eventTypes: countByType(events, 'type'),
     })
 
-    // Step 3: 提取人物（传入已有 Person 数据用于融合）
+    // Step 3: 提取人物（章节绑定，不做融合）
     logger.info('Step 3/4: Extracting persons...')
     const personStartTime = Date.now()
-    const existingPersons = await this.getExistingPersons(events)
-    logger.info('Found existing persons for fusion', { count: existingPersons.length })
-    const persons = await this.extractPersons(chapterText, events, existingPersons)
+    const persons = await this.extractPersons(chapterText, events)
     const personDuration = Date.now() - personStartTime
     
     logger.info('Step 3/4: Persons extraction done', {
@@ -183,12 +184,10 @@ export class LLMExtractor {
       factions: countByType(persons, 'faction'),
     })
 
-    // Step 4: 提取和增强地点信息（传入已有 Place 数据用于融合）
+    // Step 4: 提取和增强地点信息（章节绑定，不做融合）
     logger.info('Step 4/4: Extracting and enhancing locations...')
     const placeStartTime = Date.now()
-    const existingPlaces = await this.getExistingPlaces(events)
-    logger.info('Found existing places for fusion', { count: existingPlaces.length })
-    const places = await this.extractAndEnhanceLocations(events, chapterText, chapterId, existingPlaces)
+    const places = await this.extractAndEnhanceLocations(events, chapterText, chapterId)
     const placeDuration = Date.now() - placeStartTime
     
     logger.info('Step 4/4: Locations extraction done', {
@@ -332,13 +331,29 @@ export class LLMExtractor {
     const allTruncated: string[] = []
 
     // 优先提取L1事件，然后L2，最后L3
+    // 数量上限：L1 无上限，L2≤25，L3≤30，总计≤80
+    const L2_MAX = 25
+    const L3_MAX = 30
+    const TOTAL_MAX = 80
+
     const l1Events = sortedOverviews.filter(o => o.importance === 'L1')
-    const l2Events = sortedOverviews.filter(o => o.importance === 'L2')
-    const l3Events = sortedOverviews.filter(o => o.importance === 'L3')
+    const l2Events = sortedOverviews.filter(o => o.importance === 'L2').slice(0, L2_MAX)
+    const l3Events = sortedOverviews.filter(o => o.importance === 'L3').slice(0, L3_MAX)
     const l4Events = sortedOverviews.filter(o => o.importance === 'L4')
 
-    // 合并所有需要提取的事件（L1-L3，L4可选）
-    const eventsToExtract = [...l1Events, ...l2Events, ...l3Events]
+    const combined = [...l1Events, ...l2Events, ...l3Events]
+    const eventsToExtract = combined.slice(0, TOTAL_MAX)
+    const truncatedOverviews = combined.slice(TOTAL_MAX)
+    for (const o of truncatedOverviews) {
+      allTruncated.push(o.name)
+    }
+    if (truncatedOverviews.length > 0) {
+      logger.info('Events truncated by limit', {
+        truncatedCount: truncatedOverviews.length,
+        totalBeforeTruncate: combined.length,
+        truncatedNames: truncatedOverviews.slice(0, 5).map(o => o.name),
+      })
+    }
 
     logger.info('Phase 2: Events to extract', {
       l1Count: l1Events.length,
@@ -346,6 +361,7 @@ export class LLMExtractor {
       l3Count: l3Events.length,
       l4Count: l4Events.length,
       totalToExtract: eventsToExtract.length,
+      truncatedCount: truncatedOverviews.length,
     })
 
     // 分页提取详细信息
@@ -547,55 +563,9 @@ export class LLMExtractor {
   /**
    * 从事件中聚合人物名单，然后补全人物详细信息
    */
-  /**
-   * 获取已有的人物数据（用于融合）
-   */
-  private async getExistingPersons(events: ExtractedEvent[]): Promise<any[]> {
-    // 从事件中收集所有人物名称
-    const personNames = new Set<string>()
-    events.forEach(event => {
-      event.actors?.forEach(actor => {
-        if (actor.name) {
-          personNames.add(actor.name)
-        }
-      })
-    })
-
-    if (personNames.size === 0) {
-      return []
-    }
-
-    const namesList = Array.from(personNames)
-    
-    // 查询已有的人物（通过名称或别名匹配）
-    const existingPersons = await prisma.person.findMany({
-      where: {
-        OR: [
-          { name: { in: namesList } },
-          { aliases: { hasSome: namesList } },
-        ],
-        status: 'PUBLISHED',
-      },
-      select: {
-        id: true,
-        name: true,
-        aliases: true,
-        role: true,
-        faction: true,
-        biography: true,
-        birthYear: true,
-        deathYear: true,
-        sourceChapterIds: true,
-      },
-    })
-
-    return existingPersons
-  }
-
   private async extractPersons(
-    fullText: string, 
-    events: ExtractedEvent[], 
-    existingPersons: any[] = []
+    fullText: string,
+    events: ExtractedEvent[]
   ): Promise<ExtractedPerson[]> {
     const startTime = Date.now()
     
@@ -617,14 +587,13 @@ export class LLMExtractor {
     const namesList = Array.from(personNames)
     logger.info('Starting person extraction', {
       personCount: personNames.size,
-      existingPersonsCount: existingPersons.length,
       names: namesList.slice(0, 10),
       moreNames: namesList.length > 10 ? `...+${namesList.length - 10} more` : undefined,
       textLengthForPrompt: Math.min(fullText.length, 15000),
     })
 
-    // 调用 LLM 补全人物详细信息（传入已有数据用于融合）
-    const prompt = buildPersonPrompt(fullText, namesList, existingPersons)
+    // 调用 LLM 补全人物详细信息（章节绑定，不做融合）
+    const prompt = buildPersonPrompt(fullText, namesList)
     try {
       const result = await this.llm.callJSON<{
         persons: ExtractedPerson[]
@@ -677,65 +646,12 @@ export class LLMExtractor {
   // cleanLocationName 和 extractLocationAlias 已移至 utils.ts
 
   /**
-   * 获取已有的地点数据（用于融合）
-   */
-  private async getExistingPlaces(events: ExtractedEvent[]): Promise<any[]> {
-    // 从事件中收集所有地点名称
-    const locationNames = new Set<string>()
-    events.forEach(event => {
-      if (event.locationName) {
-        event.locationName.split(/[,，]/).forEach(loc => {
-          const cleaned = cleanLocationName(loc.trim())
-          if (cleaned) locationNames.add(cleaned)
-        })
-      }
-    })
-
-    if (locationNames.size === 0) {
-      return []
-    }
-
-    const namesList = Array.from(locationNames)
-    
-    // 查询已有的地点（通过名称或别名匹配）
-    const existingPlaces = await (prisma as any).place.findMany({
-      where: {
-        OR: [
-          { name: { in: namesList } },
-          { aliases: { hasSome: namesList } },
-        ],
-        status: 'PUBLISHED',
-      },
-      select: {
-        id: true,
-        name: true,
-        aliases: true,
-        coordinatesLng: true,
-        coordinatesLat: true,
-        modernLocation: true,
-        modernAddress: true,
-        adminLevel1: true,
-        adminLevel2: true,
-        adminLevel3: true,
-        geographicContext: true,
-        featureType: true,
-        timeRangeBegin: true,
-        timeRangeEnd: true,
-        sourceChapterIds: true,
-      },
-    })
-
-    return existingPlaces
-  }
-
-  /**
-   * 从事件中提取和增强地点信息
+   * 从事件中提取和增强地点信息（章节绑定，不做融合）
    */
   private async extractAndEnhanceLocations(
     events: ExtractedEvent[],
     chapterText: string,
-    chapterId?: string,
-    existingPlaces: any[] = []
+    chapterId?: string
   ): Promise<ExtractedPlace[]> {
     const startTime = Date.now()
     
@@ -776,40 +692,9 @@ export class LLMExtractor {
       moreNames: namesList.length > 10 ? `...+${namesList.length - 10} more` : undefined,
     })
     
-    // 2. 批量查询数据库，找出已存在的地点（MVP 阶段：已存在的地点直接跳过）
-    const existingPlacesMap = new Map<string, any>()
-    const existingPlacesList = await (prisma as any).place.findMany({
-      where: {
-        name: { in: namesList },
-        status: 'PUBLISHED',
-      },
-    })
-    
-    existingPlacesList.forEach((place: any) => {
-      existingPlacesMap.set(place.name, place)
-    })
-    
-    // 3. 过滤出不存在的地点
-    const newLocationNames = namesList.filter(name => !existingPlacesMap.has(name))
-    const existingPlacesResult: ExtractedPlace[] = existingPlacesList.map((place: any) =>
-      convertPlaceToExtracted(place)
-    )
-    
-    logger.info('Filtered existing places', {
-      total: namesList.length,
-      existing: existingPlacesList.length,
-      new: newLocationNames.length,
-    })
-    
-    // 如果所有地点都已存在，直接返回
-    if (newLocationNames.length === 0) {
-      logger.info('All locations already exist, skipping extraction')
-      return existingPlacesResult
-    }
-    
-    // 4. 对不存在的地点逐个查询 CHGIS API
+    // 2. 对地点逐个查询 CHGIS API（章节绑定：每章都提取，不跳过已有）
     const chgisResults = new Map<string, ExtractedPlace>()
-    for (const locationName of newLocationNames) {
+    for (const locationName of namesList) {
       try {
         const chgisData = await this.queryCHGIS(locationName, events)
         if (chgisData) {
@@ -826,14 +711,14 @@ export class LLMExtractor {
     }
     
     logger.info('CHGIS queries completed', {
-      total: newLocationNames.length,
+      total: namesList.length,
       succeeded: chgisResults.size,
-      failed: newLocationNames.length - chgisResults.size,
+      failed: namesList.length - chgisResults.size,
     })
     
-    // 5. 批量调用 LLM 增强所有新地点（即使有 CHGIS 数据，也调用 LLM 获取更丰富的信息）
+    // 3. 批量调用 LLM 增强所有地点
     const llmPlaces = await this.enhanceLocationsBatchWithLLM(
-      newLocationNames,
+      namesList,
       chapterText,
       events,
       chgisResults
@@ -860,6 +745,7 @@ export class LLMExtractor {
           coordinates: chgisData.coordinates,
           modernLocation: chgisData.modernLocation || llmPlace.modernLocation,
           modernAddress: chgisData.modernAddress || llmPlace.modernAddress,
+          chgisId: chgisData.chgisId,
           source: 'HYBRID' as const, // 标记为混合来源
         }
       } else {
@@ -871,26 +757,14 @@ export class LLMExtractor {
       }
       
       mergedPlaces.push(mergedPlace)
-      
-      // 7. 保存到地点知识库
-      try {
-        await this.savePlaceToKnowledgeBase(mergedPlace, undefined, chapterId)
-      } catch (error: any) {
-        logger.error('Failed to save place to knowledge base', {
-          locationName: llmPlace.name,
-          error: error?.message || String(error),
-        })
-      }
     }
     
-    // 8. 合并已有地点和新地点返回
-    const allPlaces = [...existingPlacesResult, ...mergedPlaces]
+    // 4. 返回提取的地点（通过 ReviewItem 审核后持久化）
+    const allPlaces = mergedPlaces
     
     const duration = Date.now() - startTime
     logger.info('Location extraction completed', {
       inputNames: namesList.length,
-      existing: existingPlacesResult.length,
-      new: mergedPlaces.length,
       total: allPlaces.length,
       duration,
       sources: countByType(allPlaces, 'source'),
@@ -900,71 +774,132 @@ export class LLMExtractor {
   }
 
   /**
+   * 从 timeRangeStart 解析年份，用于 CHGIS yr 参数
+   * 支持：前207年、约前209年、公元前206年、-206、-206-12
+   */
+  private parseYearForCHGIS(timeStr: string | undefined): number | null {
+    if (!timeStr || typeof timeStr !== 'string') return null
+    let s = timeStr.trim()
+    if (s.startsWith('约')) s = s.slice(1).trim()
+    let isBCE = false
+    if (s.startsWith('前')) {
+      isBCE = true
+      s = s.slice(1).trim()
+    } else if (s.startsWith('公元前')) {
+      isBCE = true
+      s = s.slice(3).trim()
+    } else if (s.startsWith('-')) {
+      isBCE = true
+      s = s.slice(1).trim()
+    }
+    if (s.endsWith('年')) s = s.slice(0, -1).trim()
+    const match = s.match(/^(-?\d+)/) || s.match(/^(\d+)/)
+    if (!match) return null
+    const n = parseInt(match[1], 10)
+    if (isNaN(n)) return null
+    return isBCE ? -Math.abs(n) : n
+  }
+
+  /**
+   * 解析 CHGIS result 的 years 字段，如 "-379 ~ 445"
+   */
+  private parseChgisYears(years: string | undefined): { begin: number; end: number } | null {
+    if (!years || typeof years !== 'string') return null
+    const m = years.match(/^(-?\d+)\s*~\s*(-?\d+)$/)
+    if (!m) return null
+    const begin = parseInt(m[1], 10)
+    const end = parseInt(m[2], 10)
+    return isNaN(begin) || isNaN(end) ? null : { begin, end }
+  }
+
+  /**
+   * 当 CHGIS 返回多条结果时，选择最匹配的一条
+   * - 优先：年份在范围内、县/郡级别、京兆/关中/内史等中原地区
+   */
+  private selectBestChgisResult(
+    results: any[],
+    targetYear: number | null,
+    locationName: string
+  ): any {
+    if (results.length === 0) return null
+    if (results.length === 1) return results[0]
+
+    const preferFeatureTypes = ['县', '郡', '府', '州']
+    const preferParentKeywords = ['京兆', '内史', '西安', '关中', '三辅', '咸阳', '长安']
+
+    const score = (r: any): number => {
+      let s = 0
+      const ft = (r['feature type'] || '').toString()
+      const parent = (r['parent name'] || '').toString()
+
+      if (targetYear != null && r.years) {
+        const range = this.parseChgisYears(r.years)
+        if (range && targetYear >= range.begin && targetYear <= range.end) {
+          s += 100
+        }
+      }
+      const ftMatch = preferFeatureTypes.find(k => ft.includes(k))
+      if (ftMatch) s += 50 - preferFeatureTypes.indexOf(ftMatch)
+      const parentMatch = preferParentKeywords.find(k => parent.includes(k))
+      if (parentMatch) s += 30
+      return s
+    }
+
+    const sorted = [...results].sort((a, b) => score(b) - score(a))
+    const best = sorted[0]
+    if (results.length > 1 && targetYear != null) {
+      logger.debug('CHGIS multi-result selection', {
+        locationName,
+        targetYear,
+        total: results.length,
+        selected: best.name,
+        parent: best['parent name'],
+        years: best.years,
+      })
+    }
+    return best
+  }
+
+  /**
    * 查询 CHGIS API
    */
   private async queryCHGIS(
     locationName: string,
     events: ExtractedEvent[]
   ): Promise<ExtractedPlace | null> {
-    // 从相关事件中获取年份
-    const relatedEvent = events.find(e => 
-      e.locationName?.includes(locationName) || 
+    const relatedEvent = events.find(e =>
+      e.locationName?.includes(locationName) ||
       e.locationName?.split(/[,，]/).some(loc => cleanLocationName(loc.trim()) === locationName)
     )
-    const year = relatedEvent?.timeRangeStart
-    
-    // 调用 CHGIS API（直接调用，不通过后端路由）
+    const yearStr = relatedEvent?.timeRangeStart
+    const targetYear = this.parseYearForCHGIS(yearStr)
+
     const CHGIS_API_BASE = 'https://chgis.hudci.org/tgaz/placename'
     const params = new URLSearchParams({
       n: locationName,
       fmt: 'json',
     })
-    
-    // 年份格式转换
-    if (year) {
-      let normalizedYear: string | undefined
-      // 处理"约前209年"格式
-      let workingStr = year.trim()
-      if (workingStr.startsWith('约')) {
-        workingStr = workingStr.slice(1).trim()
-      }
-      let isBCE = false
-      if (workingStr.startsWith('前')) {
-        isBCE = true
-        workingStr = workingStr.slice(1).trim()
-      } else if (workingStr.startsWith('公元前')) {
-        isBCE = true
-        workingStr = workingStr.slice(3).trim()
-      }
-      if (workingStr.endsWith('年')) {
-        workingStr = workingStr.slice(0, -1).trim()
-      }
-      const yearMatch = workingStr.match(/^(\d+)/)
-      if (yearMatch) {
-        const yearNum = parseInt(yearMatch[1], 10)
-        if (!isNaN(yearNum)) {
-          normalizedYear = isBCE ? `-${yearNum}` : `${yearNum}`
-          params.append('yr', normalizedYear)
-        }
-      }
+    if (targetYear != null) {
+      params.append('yr', String(targetYear))
+      logger.debug('CHGIS query with year', { locationName, targetYear })
+    } else {
+      logger.debug('CHGIS query without year (no event match or parse failed)', {
+        locationName,
+        yearStr: yearStr ?? undefined,
+      })
     }
-    
+
     const chgisUrl = `${CHGIS_API_BASE}?${params.toString()}`
-    
     const response = await fetch(chgisUrl, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
     })
-    
+
     if (!response.ok) {
       throw new Error(`CHGIS API returned ${response.status}`)
     }
-    
+
     const data = await response.json() as any
-    
-    // 解析 CHGIS 响应
     let results: any[] = []
     if (data.placenames && Array.isArray(data.placenames)) {
       results = data.placenames
@@ -973,12 +908,12 @@ export class LLMExtractor {
     } else if (data.results && Array.isArray(data.results)) {
       results = data.results
     }
-    
+
     if (results.length === 0) {
       throw new Error('CHGIS no result')
     }
-    
-    const result = results[0]
+
+    const result = this.selectBestChgisResult(results, targetYear, locationName)
     
     // 提取坐标
     let coordinates: { lng: number; lat: number } | null = null
@@ -1080,65 +1015,5 @@ export class LLMExtractor {
   // buildLocationPrompt, buildBatchLocationPrompt, locationSystemPrompt 已移至 prompts.ts
   // convertPlaceToExtracted 已移至 utils.ts
 
-  /**
-   * 保存地点到知识库
-   */
-  private async savePlaceToKnowledgeBase(
-    placeData: ExtractedPlace,
-    existingPlace: any,
-    chapterId?: string
-  ): Promise<void> {
-    const { prisma } = await import('./prisma')
-    
-    const data: any = {
-      name: placeData.name,
-      aliases: placeData.aliases || [],
-      coordinatesLng: placeData.coordinates?.lng,
-      coordinatesLat: placeData.coordinates?.lat,
-      modernLocation: placeData.modernLocation,
-      modernAddress: placeData.modernAddress,
-      adminLevel1: placeData.adminLevel1,
-      adminLevel2: placeData.adminLevel2,
-      adminLevel3: placeData.adminLevel3,
-      geographicContext: placeData.geographicContext,
-      featureType: placeData.featureType,
-      source: placeData.source === 'CHGIS' ? 'CHGIS' : placeData.source === 'LLM' ? 'LLM' : 'HYBRID',
-      chgisId: placeData.chgisId,
-      timeRangeBegin: placeData.timeRangeBegin,
-      timeRangeEnd: placeData.timeRangeEnd,
-    }
-    
-    if (existingPlace) {
-      // 更新现有记录
-      const updatedSourceChapterIds = existingPlace.sourceChapterIds || []
-      if (chapterId && !updatedSourceChapterIds.includes(chapterId)) {
-        updatedSourceChapterIds.push(chapterId)
-      }
-      
-      // 合并别名：保留已有别名，添加新别名
-      const existingAliases = existingPlace.aliases || []
-      const newAliases = placeData.aliases || []
-      const mergedAliases = Array.from(new Set([...existingAliases, ...newAliases]))
-      
-      await (prisma as any).place.update({
-        where: { id: existingPlace.id },
-        data: {
-          ...data,
-          aliases: mergedAliases,
-          sourceChapterIds: updatedSourceChapterIds,
-        },
-      })
-      logger.debug('Place updated in knowledge base', { name: placeData.name })
-    } else {
-      // 创建新记录
-      await (prisma as any).place.create({
-        data: {
-          ...data,
-          sourceChapterIds: chapterId ? [chapterId] : [],
-        },
-      })
-      logger.debug('Place saved to knowledge base', { name: placeData.name })
-    }
-  }
 }
 
