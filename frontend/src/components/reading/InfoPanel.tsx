@@ -3,10 +3,9 @@
  * 包含人物、事件、关系三个标签页
  */
 import { Tabs, Box } from '@mantine/core'
-import { IconUsers, IconTimeline, IconLink } from '@tabler/icons-react'
+import { IconUsers, IconTimeline } from '@tabler/icons-react'
 import { PersonList } from './PersonList'
 import { EventTimeline } from './EventTimeline'
-import { RelationshipGraph } from './RelationshipGraph'
 import type { Person, Event, EventImportanceFilter } from '../../lib/api'
 
 interface InfoPanelProps {

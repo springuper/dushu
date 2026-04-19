@@ -123,7 +123,7 @@ function PersonsPage() {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      const allIds = new Set(data?.items.map((p: any) => p.id) || [])
+      const allIds = new Set<string>(data?.items.map((p: any) => p.id) || [])
       setSelectedIds(allIds)
     } else {
       setSelectedIds(new Set())
@@ -621,8 +621,7 @@ function PersonDetailModal({ personId, onClose }: { personId: string | null; onC
                 {needsExpand(person.biography) && (
                   <Button
                     variant="subtle"
-                    size="xs"
-                    compact
+                    size="compact-xs"
                     leftSection={expandedBiography ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                     onClick={() => setExpandedBiography(!expandedBiography)}
                     style={{ alignSelf: 'flex-start' }}

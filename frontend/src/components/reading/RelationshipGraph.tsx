@@ -11,7 +11,6 @@ import {
   Group,
   ScrollArea,
   Loader,
-  Alert,
   Box,
   Select,
   Progress,
@@ -19,7 +18,7 @@ import {
   Timeline,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { getPersons, getPersonRelationships, getRelationship, type Person, type RelationshipResponse } from '../../lib/api'
+import { getPersons, getPersonRelationships, getRelationship, type RelationshipResponse } from '../../lib/api'
 
 interface RelationshipGraphProps {
   chapterId?: string
@@ -52,7 +51,7 @@ const roleTypeNames: Record<string, string> = {
   OTHER: '其他',
 }
 
-export function RelationshipGraph({ chapterId }: RelationshipGraphProps) {
+export function RelationshipGraph({ chapterId: _chapterId }: RelationshipGraphProps) {
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null)
   const [relationshipDetail, setRelationshipDetail] = useState<RelationshipResponse | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)

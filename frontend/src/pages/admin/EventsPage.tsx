@@ -664,8 +664,7 @@ function EventsPage() {
               {needsExpand(viewing.summary) && (
                 <Button
                   variant="subtle"
-                  size="xs"
-                  compact
+                  size="compact-xs"
                   leftSection={expandedSummary ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                   onClick={() => setExpandedSummary(!expandedSummary)}
                   style={{ alignSelf: 'flex-start' }}
@@ -691,8 +690,7 @@ function EventsPage() {
                   {needsExpand(viewing.impact) && (
                     <Button
                       variant="subtle"
-                      size="xs"
-                      compact
+                      size="compact-xs"
                       leftSection={expandedImpact ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                       onClick={() => setExpandedImpact(!expandedImpact)}
                       style={{ alignSelf: 'flex-start' }}

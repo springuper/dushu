@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Container,
@@ -234,7 +234,7 @@ function ChaptersPage() {
 
             {importMutation.error && (
               <Alert icon={<IconAlertCircle size={16} />} color="red">
-                {importMutation.error?.response?.data?.error || importMutation.error.message}
+                {(importMutation.error as any)?.response?.data?.error || importMutation.error.message}
               </Alert>
             )}
           </Stack>
@@ -260,7 +260,7 @@ function ChapterList() {
     },
   })
 
-  const { data: chaptersData, refetch } = useQuery({
+  const { data: chaptersData } = useQuery({
     queryKey: ['chapters', selectedBookId],
     queryFn: async () => {
       const params = selectedBookId ? { bookId: selectedBookId } : {}

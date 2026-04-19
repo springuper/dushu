@@ -2,7 +2,7 @@
  * 地点地图模态窗口组件
  * 显示历史地名的 Google Maps 地图
  */
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Modal,
   Stack,
@@ -33,12 +33,6 @@ const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 const mapContainerStyle = {
   width: '100%',
   height: '500px',
-}
-
-// 默认地图中心（中国中部）
-const defaultCenter = {
-  lat: 35.0,
-  lng: 105.0,
 }
 
 // 默认缩放级别
@@ -167,7 +161,7 @@ export function LocationMapModal({
                   variant="light" 
                   onClick={() => {
                     // 使用现代地名在 Google Maps 中搜索
-                    const searchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(relatedEvent.locationModernName)}`
+                    const searchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(relatedEvent.locationModernName!)}`
                     window.open(searchUrl, '_blank')
                   }}
                 >

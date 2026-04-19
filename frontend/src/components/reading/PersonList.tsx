@@ -224,8 +224,7 @@ export function PersonList({ chapterId, onPersonClick, selectedPersonId }: Perso
                     {needsExpand(person.biography) && (
                       <Button
                         variant="subtle"
-                        size="xs"
-                        compact
+                        size="compact-xs"
                         leftSection={expandedCards.has(person.id) ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
                         onClick={(e) => toggleExpand(person.id, e)}
                         style={{ alignSelf: 'flex-start', padding: '2px 8px' }}

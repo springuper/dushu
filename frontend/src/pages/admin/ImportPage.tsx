@@ -209,7 +209,7 @@ function ImportPage() {
 
         {importMutation.error && (
           <Alert icon={<IconAlertCircle size={16} />} color="red">
-            {importMutation.error?.response?.data?.error || importMutation.error.message}
+            {(importMutation.error as any)?.response?.data?.error || importMutation.error.message}
           </Alert>
         )}
       </Stack>

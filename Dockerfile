@@ -15,10 +15,12 @@ RUN npm run build
 FROM node:20-alpine AS backend-build
 WORKDIR /app/backend
 COPY backend/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY backend/ ./
 RUN npx prisma generate
 RUN npm run build
+# Remove devDependencies for production copy
+RUN npm prune --omit=dev
 
 # ========== 阶段 3: 生产镜像 ==========
 FROM node:20-alpine

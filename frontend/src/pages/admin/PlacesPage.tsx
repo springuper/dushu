@@ -21,8 +21,6 @@ import {
   Title,
   Paper,
   Divider,
-  Code,
-  Checkbox,
 } from '@mantine/core'
 import { IconEdit, IconPlus, IconTrash, IconEye } from '@tabler/icons-react'
 import { api } from '../../lib/api'

@@ -603,8 +603,7 @@ function ReviewDetailModal({
                       {needsExpand(data.summary) && (
                         <Button
                           variant="subtle"
-                          size="xs"
-                          compact
+                          size="compact-xs"
                           leftSection={expandedSummary ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                           onClick={() => setExpandedSummary(!expandedSummary)}
                           style={{ alignSelf: 'flex-start' }}
@@ -629,8 +628,7 @@ function ReviewDetailModal({
                           {needsExpand(data.impact) && (
                             <Button
                               variant="subtle"
-                              size="xs"
-                              compact
+                              size="compact-xs"
                               leftSection={expandedImpact ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                               onClick={() => setExpandedImpact(!expandedImpact)}
                               style={{ alignSelf: 'flex-start' }}
@@ -686,8 +684,7 @@ function ReviewDetailModal({
                     {needsExpand(data.biography) && (
                       <Button
                         variant="subtle"
-                        size="xs"
-                        compact
+                        size="compact-xs"
                         leftSection={expandedBiography ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                         onClick={() => setExpandedBiography(!expandedBiography)}
                         style={{ alignSelf: 'flex-start' }}
