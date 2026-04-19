@@ -28,11 +28,17 @@ const PORT = process.env.PORT || 3001
 // Middleware
 app.use(cors({
   origin: (origin, callback) => {
+    // 无 origin（同源请求、curl 等）始终允许
+    if (!origin) {
+      callback(null, true)
     // 允许 localhost 的所有端口（开发环境）
-    if (!origin || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+    } else if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      callback(null, true)
+    // 允许 *.run.app（Cloud Run 同源部署）
+    } else if (origin.endsWith('.run.app')) {
       callback(null, true)
     } else {
-      // 生产环境可以配置具体的域名
+      // 生产环境可以通过 FRONTEND_URL 配置额外域名
       const allowedOrigins = process.env.FRONTEND_URL?.split(',') || []
       if (allowedOrigins.includes(origin)) {
         callback(null, true)
