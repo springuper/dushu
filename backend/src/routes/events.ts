@@ -303,7 +303,7 @@ router.get('/by-chapter/:chapterId', requireAuth, async (req, res) => {
       paragraphOrderMap[para.id] = para.order
     }
 
-    // 按段落顺序和时间排序
+    // 按时间（优先）和段落顺序排序
     const events = sortEventsByParagraphAndTime(rawEvents, paragraphOrderMap)
 
     res.json(events)

@@ -9,7 +9,7 @@ import { LLMExtractor } from '../lib/llmExtractor'
 import { LLMTranslator } from '../lib/llmTranslator'
 import { LLMMentionExtractor } from '../lib/llmMentionExtractor'
 import { createLogger } from '../lib/logger'
-import { sortEventsByTime, sortEventsByParagraphAndTime } from '../lib/utils'
+import { sortEventsByParagraphAndTime } from '../lib/utils'
 import { preprocessRawText } from '../lib/preprocessChapter'
 
 const router = express.Router()
@@ -155,7 +155,7 @@ router.get('/:id', async (req, res) => {
       }
     }
 
-    // 对事件按段落顺序和时间排序
+    // 对事件按时间（优先）和段落顺序排序
     if (chapter.events) {
       chapter.events = sortEventsByParagraphAndTime(chapter.events, paragraphOrderMap)
     }
@@ -789,7 +789,7 @@ router.get('/:id/events', async (req, res) => {
       paragraphOrderMap[para.id] = para.order
     }
 
-    // 按段落顺序和时间排序
+    // 按时间（优先）和段落顺序排序
     const events = sortEventsByParagraphAndTime(rawEvents, paragraphOrderMap)
 
     res.json(events)
