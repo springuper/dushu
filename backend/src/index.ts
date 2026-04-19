@@ -1,4 +1,5 @@
 import path from 'path'
+import fs from 'fs'
 import dotenv from 'dotenv'
 
 // 加载 backend/.env（含 DATABASE_URL、OPENAI_API_KEY 等）
@@ -17,6 +18,7 @@ import session from 'express-session'
 import connectPgSimple from 'connect-pg-simple'
 import { Pool } from 'pg'
 import { createLogger, generateRequestId } from './lib/logger'
+import { prisma } from './lib/prisma'
 
 const logger = createLogger('http')
 
@@ -53,6 +55,9 @@ const sessionMaxAge = isDevelopment
 // 创建 PostgreSQL 连接池用于 session store
 const pgPool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: parseInt(process.env.PG_POOL_MAX || '10', 10),
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 })
 
 // 创建 PostgreSQL session store
@@ -94,7 +99,10 @@ app.use((req, res, next) => {
   req.startTime = Date.now()
 
   // 跳过健康检查和静态资源的日志
-  const skipLog = req.path === '/api/health' || req.path.startsWith('/static')
+  const skipLog =
+    req.path === '/api/health' ||
+    req.path.startsWith('/static') ||
+    req.path.startsWith('/assets')
   
   if (!skipLog) {
     const session = req.session as any
@@ -169,8 +177,49 @@ app.use('/api/aggregate', aggregateRouter)
 import locationsRouter from './routes/locations'
 app.use('/api/locations', locationsRouter)
 
+// 生产环境：托管前端静态文件（前端由后端 serve，同源部署）
+const frontendDist = path.join(__dirname, '../frontend-dist')
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist))
+  // SPA 回退：非 API 且非静态资源的请求返回 index.html
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(frontendDist, 'index.html'))
+  })
+}
+
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Server started`, { port: PORT, env: process.env.NODE_ENV || 'development' })
 })
+
+// Graceful shutdown
+function gracefulShutdown(signal: string) {
+  logger.info(`${signal} received, shutting down gracefully...`)
+  server.close(async () => {
+    logger.info('HTTP server closed')
+    try {
+      await prisma.$disconnect()
+      logger.info('Prisma disconnected')
+    } catch (e) {
+      logger.error('Error disconnecting Prisma', { error: e })
+    }
+    try {
+      await pgPool.end()
+      logger.info('PostgreSQL session pool closed')
+    } catch (e) {
+      logger.error('Error closing pg pool', { error: e })
+    }
+    process.exit(0)
+  })
+
+  // Force exit if graceful shutdown takes too long
+  setTimeout(() => {
+    logger.error('Graceful shutdown timed out, forcing exit')
+    process.exit(1)
+  }, 10000)
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
 

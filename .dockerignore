@@ -1,0 +1,15 @@
+# 忽略不必要文件，加快构建
+.git
+.gitignore
+node_modules
+**/node_modules
+dist
+**/dist
+.env
+**/.env
+*.md
+!docs/deployment/*.md
+.cursor
+*.log
+data
+scripts

@@ -1,7 +1,10 @@
 import axios from 'axios'
 import type { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
+// 同源部署时 VITE_API_BASE_URL=''，用 ?? 保留空串；未设置时 dev 用 localhost
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.DEV ? 'http://localhost:3001' : '')
 
 // 日志工具
 const logger = {
