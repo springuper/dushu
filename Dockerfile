@@ -17,6 +17,8 @@ WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm ci
 COPY backend/ ./
+# Dummy DATABASE_URL for prisma generate (only schema is needed, not actual connection)
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
 RUN npx prisma generate
 RUN npm run build
 # Remove devDependencies for production copy
@@ -30,6 +32,8 @@ WORKDIR /app
 COPY --from=backend-build /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-build /app/backend/dist ./backend/dist
 COPY --from=backend-build /app/backend/prisma ./backend/prisma
+COPY --from=backend-build /app/backend/prisma.config.ts ./backend/
+COPY --from=backend-build /app/backend/tsconfig.json ./backend/
 COPY --from=backend-build /app/backend/package*.json ./backend/
 
 # 前端静态文件（放到 backend 可寻路径）
