@@ -9,6 +9,8 @@ RUN npm ci
 COPY frontend/ ./
 # 同源部署时 API 用相对路径，空字符串表示当前域名
 ENV VITE_API_BASE_URL=
+# Google Maps JavaScript API key (client-side, restricted by HTTP referrer)
+ENV VITE_GOOGLE_MAPS_API_KEY=AIzaSyDIookyEkbIEYPyVpwMl13BHoOeI1xMVjA
 RUN npm run build
 
 # ========== 阶段 2: 构建后端 ==========

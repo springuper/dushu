@@ -182,7 +182,7 @@ const frontendDist = path.join(__dirname, '../frontend-dist')
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist))
   // SPA 回退：非 API 且非静态资源的请求返回 index.html
-  app.get('*', (req, res, next) => {
+  app.get('{*path}', (req, res, next) => {
     if (req.path.startsWith('/api')) return next()
     res.sendFile(path.join(frontendDist, 'index.html'))
   })
