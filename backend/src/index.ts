@@ -58,6 +58,11 @@ const sessionMaxAge = isDevelopment
   ? 7 * 24 * 60 * 60 * 1000 // 7 天（开发环境）
   : 30 * 60 * 1000 // 30 分钟（生产环境）
 
+// Trust reverse proxy (Cloud Run, etc.) for secure cookies
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1)
+}
+
 // 创建 PostgreSQL 连接池用于 session store
 const pgPool = new Pool({
   connectionString: process.env.DATABASE_URL,
