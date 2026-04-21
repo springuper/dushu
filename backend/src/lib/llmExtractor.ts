@@ -244,7 +244,7 @@ export class LLMExtractor {
     paragraphs: ParagraphInput[]
   ): Promise<{ events: ExtractedEvent[]; truncatedEvents: string[] }> {
     const startTime = Date.now()
-    const PAGE_SIZE = 25 // 每页返回的事件数量
+    const PAGE_SIZE = 20 // 每页返回的事件数量
     const MAX_RETRIES = 0
 
     logger.info('Starting two-phase event extraction', { 
