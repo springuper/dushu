@@ -434,6 +434,10 @@ router.post('/:id/extract', requireAuth, async (req, res) => {
       textLength: chapterText.length,
     })
 
+    // 清理该章节的旧数据（避免重复提取时残留）
+    await prisma.event.deleteMany({ where: { chapterId: id } })
+    await prisma.person.deleteMany({ where: { chapterId: id } })
+    await prisma.place.deleteMany({ where: { chapterId: id } })
     // 清理该章节的旧 PENDING 状态 ReviewItem（避免重复）
     // 先查询所有 PENDING 状态的 ReviewItem，然后过滤出属于该章节的
     const pendingItems = await prisma.reviewItem.findMany({
