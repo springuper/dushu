@@ -257,6 +257,45 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 })
 
+// 批量删除事件
+router.post('/batch/delete', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Invalid ids' })
+    }
+
+    const adminId = (req.session as any)?.adminId
+    const events = await prisma.event.findMany({
+      where: { id: { in: ids } },
+    })
+
+    await prisma.event.deleteMany({
+      where: { id: { in: ids } },
+    })
+
+    // 记录变更日志
+    for (const event of events) {
+      await logChange({
+        entityType: 'EVENT',
+        entityId: event.id,
+        action: 'DELETE',
+        previousData: event,
+        currentData: { deleted: true },
+        changedBy: adminId,
+        changeReason: '批量删除',
+      })
+    }
+
+    logger.info('Events batch deleted', { count: events.length })
+    res.json({ success: true, deletedCount: events.length })
+  } catch (error: any) {
+    logger.error('Batch delete events error', { error: error.message })
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // 批量更新状态
 router.post('/batch/status', requireAuth, async (req, res) => {
   try {

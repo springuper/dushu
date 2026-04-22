@@ -121,6 +121,22 @@ function PersonsPage() {
     },
   })
 
+  const batchDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await api.post('/api/admin/persons/batch/delete', { ids })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['persons'] })
+      setSelectedIds(new Set())
+    },
+  })
+
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return
+    if (!confirm(`确定删除选中的 ${selectedIds.size} 个人物吗？`)) return
+    batchDeleteMutation.mutate(Array.from(selectedIds))
+  }
+
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
       const allIds = new Set<string>(data?.items.map((p: any) => p.id) || [])
@@ -226,6 +242,16 @@ function PersonsPage() {
             onClick={() => setSelectedIds(new Set())}
           >
             取消选择
+          </Button>
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            leftSection={<IconTrash size={14} />}
+            onClick={handleBatchDelete}
+            loading={batchDeleteMutation.isPending}
+          >
+            批量删除
           </Button>
         </Group>
       )}

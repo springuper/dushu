@@ -9,6 +9,7 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Checkbox,
   Container,
   Group,
   Modal,
@@ -105,6 +106,7 @@ function EventsPage() {
   const [viewing, setViewing] = useState<EventItem | null>(null)
   const [expandedSummary, setExpandedSummary] = useState(false)
   const [expandedImpact, setExpandedImpact] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   
   const [form, setForm] = useState({
     name: '',
@@ -167,6 +169,39 @@ function EventsPage() {
       queryClient.invalidateQueries({ queryKey: ['events'] })
     },
   })
+
+  // 批量删除事件
+  const batchDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await api.post('/api/admin/events/batch/delete', { ids })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['events'] })
+      setSelectedIds([])
+    },
+  })
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(events.map((item: EventItem) => item.id))
+    } else {
+      setSelectedIds([])
+    }
+  }
+
+  const handleSelectOne = (id: string, checked: boolean) => {
+    if (checked) {
+      setSelectedIds([...selectedIds, id])
+    } else {
+      setSelectedIds(selectedIds.filter(i => i !== id))
+    }
+  }
+
+  const handleBatchDelete = () => {
+    if (selectedIds.length === 0) return
+    if (!confirm(`确定删除选中的 ${selectedIds.length} 个事件吗？`)) return
+    batchDeleteMutation.mutate(selectedIds)
+  }
 
   // 保存事件
   const saveMutation = useMutation({
@@ -299,7 +334,21 @@ function EventsPage() {
   return (
     <Container size="xl" py="xl">
       <Group justify="space-between" mb="xl">
-        <Title order={2}>事件管理</Title>
+        <Group>
+          <Title order={2}>事件管理</Title>
+          {selectedIds.length > 0 && (
+            <Button
+              color="red"
+              variant="light"
+              size="sm"
+              leftSection={<IconTrash size={16} />}
+              onClick={handleBatchDelete}
+              loading={batchDeleteMutation.isPending}
+            >
+              批量删除 ({selectedIds.length})
+            </Button>
+          )}
+        </Group>
         <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
           新建事件
         </Button>
@@ -335,6 +384,13 @@ function EventsPage() {
       <Table striped withTableBorder highlightOnHover>
         <Table.Thead>
           <Table.Tr>
+            <Table.Th style={{ width: 40 }}>
+              <Checkbox
+                checked={events.length > 0 && selectedIds.length === events.length}
+                indeterminate={selectedIds.length > 0 && selectedIds.length < events.length}
+                onChange={(e) => handleSelectAll(e.currentTarget.checked)}
+              />
+            </Table.Th>
             <Table.Th>名称</Table.Th>
             <Table.Th>时间</Table.Th>
             <Table.Th>类型</Table.Th>
@@ -348,7 +404,7 @@ function EventsPage() {
         <Table.Tbody>
           {events.length === 0 ? (
             <Table.Tr>
-              <Table.Td colSpan={8}>
+              <Table.Td colSpan={9}>
                 <Text c="dimmed" ta="center">
                   {isLoading ? '加载中...' : '暂无事件'}
                 </Text>
@@ -357,6 +413,12 @@ function EventsPage() {
           ) : (
             events.map((item: EventItem) => (
               <Table.Tr key={item.id}>
+                <Table.Td>
+                  <Checkbox
+                    checked={selectedIds.includes(item.id)}
+                    onChange={(e) => handleSelectOne(item.id, e.currentTarget.checked)}
+                  />
+                </Table.Td>
                 <Table.Td>
                   <Text size="sm" fw={500}>{item.name}</Text>
                 </Table.Td>

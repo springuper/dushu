@@ -9,6 +9,7 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Checkbox,
   Container,
   Group,
   Modal,
@@ -70,6 +71,7 @@ function PlacesPage() {
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [editing, setEditing] = useState<PlaceItem | null>(null)
   const [viewing, setViewing] = useState<PlaceItem | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   
   const [form, setForm] = useState({
     name: '',
@@ -114,6 +116,39 @@ function PlacesPage() {
       queryClient.invalidateQueries({ queryKey: ['places'] })
     },
   })
+
+  // 批量删除地点
+  const batchDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await api.post('/api/admin/places/batch/delete', { ids })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['places'] })
+      setSelectedIds([])
+    },
+  })
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(places.map((p: PlaceItem) => p.id))
+    } else {
+      setSelectedIds([])
+    }
+  }
+
+  const handleSelectOne = (id: string, checked: boolean) => {
+    if (checked) {
+      setSelectedIds([...selectedIds, id])
+    } else {
+      setSelectedIds(selectedIds.filter(i => i !== id))
+    }
+  }
+
+  const handleBatchDelete = () => {
+    if (selectedIds.length === 0) return
+    if (!confirm(`确定删除选中的 ${selectedIds.length} 个地点吗？`)) return
+    batchDeleteMutation.mutate(selectedIds)
+  }
 
   // 保存地点
   const saveMutation = useMutation({
@@ -221,7 +256,21 @@ function PlacesPage() {
   return (
     <Container size="xl" py="xl">
       <Group justify="space-between" mb="xl">
-        <Title order={2}>地点管理</Title>
+        <Group>
+          <Title order={2}>地点管理</Title>
+          {selectedIds.length > 0 && (
+            <Button
+              color="red"
+              variant="light"
+              size="sm"
+              leftSection={<IconTrash size={16} />}
+              onClick={handleBatchDelete}
+              loading={batchDeleteMutation.isPending}
+            >
+              批量删除 ({selectedIds.length})
+            </Button>
+          )}
+        </Group>
         <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
           新建地点
         </Button>
@@ -255,6 +304,13 @@ function PlacesPage() {
       <Table striped withTableBorder highlightOnHover>
         <Table.Thead>
           <Table.Tr>
+            <Table.Th style={{ width: 40 }}>
+              <Checkbox
+                checked={places.length > 0 && selectedIds.length === places.length}
+                indeterminate={selectedIds.length > 0 && selectedIds.length < places.length}
+                onChange={(e) => handleSelectAll(e.currentTarget.checked)}
+              />
+            </Table.Th>
             <Table.Th>名称</Table.Th>
             <Table.Th>现代位置</Table.Th>
             <Table.Th>坐标</Table.Th>
@@ -266,19 +322,25 @@ function PlacesPage() {
         <Table.Tbody>
           {isLoading ? (
             <Table.Tr>
-              <Table.Td colSpan={6} style={{ textAlign: 'center' }}>
+              <Table.Td colSpan={7} style={{ textAlign: 'center' }}>
                 <Text>加载中...</Text>
               </Table.Td>
             </Table.Tr>
           ) : places.length === 0 ? (
             <Table.Tr>
-              <Table.Td colSpan={6} style={{ textAlign: 'center' }}>
+              <Table.Td colSpan={7} style={{ textAlign: 'center' }}>
                 <Text c="dimmed">暂无地点</Text>
               </Table.Td>
             </Table.Tr>
           ) : (
             places.map((place: PlaceItem) => (
               <Table.Tr key={place.id}>
+                <Table.Td>
+                  <Checkbox
+                    checked={selectedIds.includes(place.id)}
+                    onChange={(e) => handleSelectOne(place.id, e.currentTarget.checked)}
+                  />
+                </Table.Td>
                 <Table.Td>
                   <Stack gap={2}>
                     <Text fw={500}>{place.name}</Text>

@@ -291,5 +291,43 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 })
 
+// 批量删除地点
+router.post('/batch/delete', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Invalid ids' })
+    }
+
+    const adminId = (req.session as any)?.adminId
+    const places = await prisma.place.findMany({
+      where: { id: { in: ids } },
+    })
+
+    await prisma.place.deleteMany({
+      where: { id: { in: ids } },
+    })
+
+    for (const place of places) {
+      await logChange({
+        entityType: 'PLACE',
+        entityId: place.id,
+        action: 'DELETE',
+        previousData: place,
+        currentData: { deleted: true },
+        changedBy: adminId,
+        changeReason: '批量删除',
+      })
+    }
+
+    logger.info('Places batch deleted', { count: places.length })
+    res.json({ success: true, deletedCount: places.length })
+  } catch (error: any) {
+    logger.error('Batch delete places error', { error: error.message })
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 export default router
 
