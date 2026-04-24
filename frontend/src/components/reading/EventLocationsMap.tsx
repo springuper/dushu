@@ -50,7 +50,7 @@ export function EventLocationsMap({ event, opened }: EventLocationsMapProps) {
 
   const locationsWithCoords = queries
     .map((q) => q.data)
-    .filter((d): d is LocationSearchResult => !!d)
+    .filter((d): d is LocationSearchResult => !!d && !!d.coordinates && d.coordinates.lat != null && d.coordinates.lng != null)
 
   useEffect(() => {
     if (!map || locationsWithCoords.length === 0) return
